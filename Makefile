@@ -1,3 +1,5 @@
+.PHONY: deploy
+
 all: codeutils mklivepatch
 
 codeutils: codeutils.c
