@@ -23,6 +23,7 @@ main()
 	echo "Symbols dir: $SYMBOLS_DIR"
 
 	echo "Synchronize..."
+	rm -rf "$workdir"/khr_*
 	getCurrentKernelVersion > "$KERNEL_VERSION_FILE"
 	regenerateSymbols
 	generateSymbols "$BUILD_DIR/vmlinux"
