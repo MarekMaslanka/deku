@@ -91,9 +91,8 @@ main()
 			local srcfile=`cat $moduledir/$module.src`
 			local objname=$(findObjWithSymbol "$sym" "$srcfile" "$BUILD_DIR")
 			if [[ "$objname" == "" ]]; then
-				restoreSymbol "$module" $sym
-				[ $? -ne 0 ] && { >&2 echo "Can not find object that contain '$sym' function"; exit 1; }
-				objname=$(filenameNoExt "$srcfile")
+				echo "$srcfile|$sym" >> $MISS_FUN_FILE
+				continue
 			fi
 			local relfile="$moduledir/$(filenameNoExt $file).$REL_FILE_EXT"
 			echo "$objname.$sym" >> "$relfile"
