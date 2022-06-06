@@ -225,7 +225,7 @@ static void extendsCtags(const char *ctagsPath, const char *srcPath) {
 				text = gotoLine(srcFile, tagLineNo);
 				// check whether variable type is struct declaration
 				if (strstr(line, ".c }")) {
-					char *s = strchr(line, '}');
+					char *s = strchr(text, '}');
 					if (s != NULL) {
 						uint32_t no = tagLineNo;
 						s = findBeginOfStruct(s, srcFile, &no);
