@@ -43,7 +43,7 @@ processModule()
 
 				echo "Adding \"$miss\" to `basename $srcfile`"
 				restoreSymbol "$module" $miss
-				[ $? -ne 0 ] && break
+				[ $? -ne 0 ] && { >&2 echo "Can not find '$miss' in $srcfile"; exit 1; }
 			done < $MISS_FUN_FILE
 		else
 			rm -f "$moduledir/err.log"

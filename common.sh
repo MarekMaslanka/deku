@@ -106,14 +106,16 @@ restoreSymbol()
 	local infile=$(intermediateSrcFile $module)
 	local outfile="$workdir/$module/$module.c"
 	local tagsfile="$workdir/$module/$module.tag"
+	local isvar=0
 
 	local poses=$(getSymbolPos "$tagname" "function" "$tagsfile")
-	[[ "$poses" == "" ]] && poses=$(getSymbolPos "$tagname" "variable" "$tagsfile")
+	[[ "$poses" == "" ]] && { poses=$(getSymbolPos "$tagname" "variable" "$tagsfile"); isvar=1; }
 	[[ "$poses" == "" ]] && { echo "Can not restore symbol $tagname in $infile"; return 1; }
 	while read -r pos; do
 		local arr=(${pos//:/ })
 		local offset=${arr[0]}
 		local end=${arr[1]}
+		[[ $isvar == 1 ]] && end=${arr[2]}
 		local cnt=$((end-offset))
 		dd if=$infile of=$outfile skip=$offset seek=$offset count=$cnt bs=1 status=none conv=notrunc
 	done <<< "$poses"
