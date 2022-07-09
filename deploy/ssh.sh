@@ -32,6 +32,11 @@ getKernelVersion()
 	echo $REMOTE_OUT
 }
 
+originModName()
+{
+	echo ${1:13}
+}
+
 main()
 {
 	local dstdir="kernelhotreload"
@@ -68,9 +73,9 @@ main()
 	local checkmod=
 	local insmod=
 	# prepare script that tries in loop disable livepatch and do rmmod. Next do insmod
-	local reloadscript="
-	max=3\n
-	for i in \`seq 1 \$max\`; do"
+	local reloadscript=
+	reloadscript+="max=3\n"
+	reloadscript+="for i in \`seq 1 \$max\`; do"
 	for file in "$@"; do
 		local skipload=
 		if [[ "$file" == -* ]]; then
@@ -83,14 +88,24 @@ main()
 		local module="$(filenameNoExt $file)"
 		local modulename=${module/-/_}
 		local modulesys="/sys/kernel/livepatch/$modulename"
+		local originname=$(originModName $module)
 		disablemod+="[ -d $modulesys ] && echo 0 > $modulesys/enabled\n"
-		transwait+="if [ -d $modulesys ]; then\n"
-		transwait+="for i in \`seq 1 10\`; do\n\t[[ \$(cat $modulesys/transition) == \"0\" ]] && break\n"
-		transwait+="\tsleep 0.1\ndone\nfi\n"
-		rmmod+="[ -d /sys/module/$modulename ] && rmmod -f $modulename\n"
+		transwait+="for i in \`seq 1 25\`; do\n"
+		transwait+="\t[ ! -d $modulesys ] && break\n"
+		transwait+="\t[ \$(cat $modulesys/transition) = \"0\" ] && break\n"
+		transwait+="\tsleep 0.2\ndone\n"
+		rmmod+="[ -d /sys/module/$modulename ] && rmmod $modulename\n"
 		if [ -z $skipload ]; then
 			checkmod+="\n[ ! -d $modulesys ] && \\\\"
-			insmod+="insmod $dstdir/`basename $file`\n"
+			insmod+="for i in \`seq 1 25\`; do\n"
+			insmod+="\tinsmod $dstdir/`basename $file` && break\n"
+			insmod+="\techo \"Retry load $originname\"\n"
+			insmod+="\tsleep 0.2\ndone\n"
+			insmod+="for i in \`seq 1 25\`; do\n"
+			insmod+="\t[ \$(cat $modulesys/transition) = \"0\" ] && break\n"
+			insmod+="\techo \"$originname is still loading...\"\n"
+			insmod+="\tsleep 0.2\ndone\n"
+			insmod+="echo \"$originname loaded\"\n"
 		fi
 	done
 	reloadscript+="\n$disablemod\n$transwait\n$rmmod$checkmod\nbreak;\nsleep 1\ndone"
@@ -99,6 +114,7 @@ main()
 
 	ssh $SSHPARAMS mkdir -p $dstdir
 	scp $SCPPARAMS $files $workdir/$HOTRELOAD_SCRIPT $host:$dstdir/
+	logInfo "Loading..."
 	remoteSh sh "$dstdir/$HOTRELOAD_SCRIPT 2>&1"
 	[ $? == "0" ] && echo -e "${GREEN}Reload done${NC}" || echo -e "${RED}Reload failed!\n$REMOTE_OUT${NC}"
 }
