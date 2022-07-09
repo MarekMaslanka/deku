@@ -15,6 +15,9 @@ export REL_FILE_EXT=rel
 # extension for intermediate source code file
 export ISRC_FILE_EXT=_.c
 
+# file for note in module
+export NOTE_FILE=note
+
 # dir with kernel's object symbols
 export SYMBOLS_DIR=$workdir/symbols
 

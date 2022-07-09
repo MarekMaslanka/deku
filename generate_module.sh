@@ -391,9 +391,6 @@ main()
 		    .mod = THIS_MODULE,
 		    .objs = khr_objs,
 		};
-
-		#define KHR_MODULE $module
-		#define KHR_MODULE_ID "$moduleid"
 		EOM
 		cat $MODULE_SUFFIX_FILE >> $srcFile
 

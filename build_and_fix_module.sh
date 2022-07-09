@@ -59,6 +59,14 @@ processModule()
 	[ ! -f "$moduledir/$module.ko" ] && { >&2 echo "Module '$moduledir/$module.ko' does not exists!"; return 3; }
 	local srcfile=`cat "$moduledir/$module.src"`
 	generateAndSaveModuleId "$SOURCE_DIR/$srcfile" "$module"
+
+	# Add note to module with module name and id
+	local notefile="$moduledir/$NOTE_FILE"
+	echo -n "$module " > "$notefile"
+	cat "$moduledir/$module.id" >> "$notefile"
+	echo "" >> "$notefile"
+	objcopy --add-section .note.khr="$notefile" --set-section-flags .note.khr=alloc,readonly "$moduledir/$module.ko"
+	
 	return 0
 }
 

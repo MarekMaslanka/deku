@@ -3,9 +3,6 @@
 * Project: KernelHotReload
 */
 
-__attribute__((section(".note.khr")))
-const char khrModuleId[] = __stringify(KHR_MODULE) " " KHR_MODULE_ID "\n";
-
 static int hotreload_init(void)
 {
 	int ret;
