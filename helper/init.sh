@@ -26,7 +26,7 @@ isKernelBuildDir()
 {
 	local dir=$1
 
-	local usellvm=0
+	local usellvm=
 	isLLVMUsed "$dir" && usellvm=1
 
 	local tmpdir=$(mktemp -d init-XXX --tmpdir=$workdir)
