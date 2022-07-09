@@ -166,10 +166,10 @@ main()
 		exit 2
 	fi
 
-	echo "BUILD_DIR=$builddir" > $CONFIG_FILE
-	echo "SOURCE_DIR=$sourcesdir" >> $CONFIG_FILE
-	echo "DEPLOY_TYPE=$deploytype" >> $CONFIG_FILE
-	echo "DEPLOY_PARAMS=$deployparams" >> $CONFIG_FILE
+	echo "BUILD_DIR=\"$builddir\"" > $CONFIG_FILE
+	echo "SOURCE_DIR=\"$sourcesdir\"" >> $CONFIG_FILE
+	echo "DEPLOY_TYPE=\"$deploytype\"" >> $CONFIG_FILE
+	echo "DEPLOY_PARAMS=\"$deployparams\"" >> $CONFIG_FILE
 	isLLVMUsed $builddir && echo "USE_LLVM=\"LLVM=1\"" >> $CONFIG_FILE
 	echo "" >> $CONFIG_FILE
 	git --work-tree="$sourcesdir" --git-dir="$workdir/.git" init
@@ -177,4 +177,4 @@ main()
 	mkdir -p "$SYMBOLS_DIR"
 }
 
-main $@
+main "$@"

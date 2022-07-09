@@ -40,7 +40,9 @@ originModName()
 main()
 {
 	local dstdir="kernelhotreload"
-	local host=$DEPLOY_PARAMS
+	local host="${DEPLOY_PARAMS%% *}"
+	local extraparams=
+	[[ $DEPLOY_PARAMS == *" "* ]] && extraparams="${DEPLOY_PARAMS#* }"
 	local sshport=${host#*:}
 	local scpport
 	if [ "$sshport" != "" ]; then
@@ -58,8 +60,8 @@ main()
 		fi
 		options+=" -o IdentityFile=$workdir/testing_rsa -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -q"
 	fi
-	SSHPARAMS="$options $host $sshport"
-	SCPPARAMS="$options $scpport"
+	SSHPARAMS="$options $extraparams $host $sshport"
+	SCPPARAMS="$options $extraparams $scpport"
 	unset SSH_AUTH_SOCK
 
 	[[ "$1" == "--getids" ]] && { getLoadedKHRModules; return; }

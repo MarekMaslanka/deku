@@ -42,15 +42,15 @@ main()
 				;;
 			v)  verbose=1
 				;;
-			b)  BUILD_DIR=$OPTARG
+			b)  BUILD_DIR="$OPTARG"
 				;;
-			s)  SOURCE_DIR=$OPTARG
+			s)  SOURCE_DIR="$OPTARG"
 				;;
-			d)  DEPLOY_TYPE=$OPTARG
+			d)  DEPLOY_TYPE="$OPTARG"
 				;;
-			p)  DEPLOY_PARAMS=$OPTARG
+			p)  DEPLOY_PARAMS="$OPTARG"
 				;;
-			w)  workdir=$OPTARG
+			w)  workdir="$OPTARG"
 				;;
 		esac
 	done
@@ -63,11 +63,11 @@ main()
 	for i in "$@"; do
 		case $i in
 			init)
-				[ -z $workdir ] && workdir="-"
-				[ -z $BUILD_DIR ] && BUILD_DIR="-"
-				[ -z $SOURCE_DIR ] && SOURCE_DIR="-"
-				[ -z $DEPLOY_TYPE ] && DEPLOY_TYPE="-"
-				[ -z $DEPLOY_PARAMS ] && DEPLOY_PARAMS="-"
+				[ -z "$workdir" ] && workdir="-"
+				[ -z "$BUILD_DIR" ] && BUILD_DIR="-"
+				[ -z "$SOURCE_DIR" ] && SOURCE_DIR="-"
+				[ -z "$DEPLOY_TYPE" ] && DEPLOY_TYPE="-"
+				[ -z "$DEPLOY_PARAMS" ] && DEPLOY_PARAMS="-"
 
 				EXTENSION="${i#*=}"
 				bash $HELPERS_DIR/$i.sh "$BUILD_DIR" "$SOURCE_DIR" "$DEPLOY_TYPE" "$DEPLOY_PARAMS" "$workdir"
@@ -115,4 +115,4 @@ main()
 	done
 }
 
-main $@
+main "$@"
