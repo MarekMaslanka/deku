@@ -9,7 +9,7 @@ main()
 	local syncversion=$(<"$KERNEL_VERSION_FILE")
 	local localversion=$(getCurrentKernelVersion)
 	if [[ "$syncversion" != "$localversion" ]]; then
-		echo -e "${ORANGE}Kernel image in build directory has changed from last run. You must undo any changes made after kernel was rebuild and run './kernel_hot_reload.sh sync'.${NC}"
+		echo -e "${ORANGE}Kernel image in build directory has changed from last run. You must undo any changes made after kernel was rebuild and run 'make sync'.${NC}"
 		exit 2
 	fi
 

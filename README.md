@@ -60,30 +60,23 @@ Example usage:
 ## Usage
 Use
 ```
-./kernel_hot_reload.sh deploy
+make deploy
 ```
-to apply changes in code to the kernel on the DUT.
+to apply changes to the kernel on the DUT.
 
 In case the kernel will be rebuilt manually the KernelHotReload must be synchronized with the new build.
 
 Use
 ```
-./kernel_hot_reload.sh sync
+make sync
 ```
 command to perform synchronization.
 
 To generate kernel livepatch module without deploy it on the target use
 ```
-./kernel_hot_reload.sh build
-```
-command. Modules can be found in `workdir/khr_XXXX/khr_XXXX.ko`
-
-Alternative to `./kernel_hot_reload.sh deploy/sync/build` commands a `make` can used:
-```
-make deploy
-make sync
 make build
 ```
+command. Modules can be found in `workdir/khr_XXXX/khr_XXXX.ko`
 
 Changes applied in the kernel on the DUT are not persistent and live to the next reboot. After every reboot the `deploy` must be performed.
 
