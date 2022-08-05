@@ -40,20 +40,25 @@ Download KernelHotReload inside cros sdk environment
 ***
 In the KernelHotReload directory use following command to initialize environment:
 ```
-./kernel_hot_reload.sh -b <PATH_TO_KERNEL_BUILD_DIR> [-s <PATH_TO_KERNEL_SOURCES_DIR>] -d ssh -p <USER@DUT_ADDRESS[:PORT]> init
+./kernel_hot_reload.sh -b <PATH_TO_KERNEL_BUILD_DIR> [-s <PATH_TO_KERNEL_SOURCES_DIR>] [--board=<CHROMEBOOK_BOARD_NAME>] -d ssh -p <USER@DUT_ADDRESS[:PORT]> init
 ```
-`-b` path to kernel build directory  
-`-s` path to kernel sources directory. Use this parameter if initialization process can't find kernel sources dir  
-`-d` method used to upload and deploy livepatch modules to the DUT. Currently only `ssh` is supported  
-`-p` parameters for deploy method. For the `ssh` deploy method, pass the user and DUT address. Optional pass the port number.
+`-b` path to kernel build directory,  
+`-s` path to kernel sources directory. Use this parameter if initialization process can't find kernel sources dir,  
+`--board` *(Only avaiable inside ChromiumOS SDK)* board name. Meaning of this parameter is the same as in the ChromiumOS SDK,  
+`-d` method used to upload and deploy livepatch modules to the DUT. Currently only the `ssh` is supported,  
+`-p` parameters for deploy method. For the `ssh` deploy method, pass the user and DUT address. Optional pass the port number,  
 The given user must be able to load and unload kernel modules. The SSH must be configured to use key-based authentication.
+
 
 ***
 _**For ChromiumOS developers**_  
-Kernel build directory inside the cros sdk is located in `/build/${BOARD}/var/cache/portage/sys-kernel/chromeos-kernel-${KERNEL_VERSION}`
+Use the `--board` parameter instead of `-b` to auto detect kernel build dir. 
 
 Example usage:  
-`./kernel_hot_reload.sh -b /build/atlas/cache/portage/sys-kernel/chromeos-kernel-5_10/ -d ssh -p root@192.168.0.100 init`
+`./kernel_hot_reload.sh --board=atlas -d ssh -p root@192.168.0.100 init`
+
+If for some reason the `--board` parameter can't be used the `-b` parameter with kernel dir must be pass.  
+Kernel build directory inside the cros sdk is located in `/build/${BOARD}/var/cache/portage/sys-kernel/chromeos-kernel-${KERNEL_VERSION}`
 ***
 
 <a name="usage"></a>

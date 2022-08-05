@@ -92,27 +92,47 @@ main()
 	local sourcesdir="."
 	local deploytype=""
 	local deployparams=""
+	local board=""
 	local workdir="workdir"
 
-	if ! options=$(getopt -u -o b:s:d:p:w: -l builddir:,sourcesdir:,deploytype:,deployparams:,workdir: -- "$@")
+	if ! options=$(getopt -u -o b:s:d:p:w: -l builddir:,sourcesdir:,deploytype:,deployparams:,board:,workdir: -- "$@")
 	then
 		exit 1
 	fi
 
 	while [ $# -gt 0 ]
 	do
-		case $1 in
-		-b|--builddir) builddir="$2" ; shift;;
-		-s|--sourcesdir) sourcesdir="$2" ; shift;;
-		-d|--deploytype) deploytype="$2" ; shift;;
-		-p|--deployparams) deployparams="$2" ; shift;;
-		-w|--workdir) workdir="$2" ; shift;;
+		local opt="$1"
+		local value="$2"
+		if [[ "$opt" =~ ^\-\-.+=.+ ]]; then
+			value=${opt#*=}
+			opt=${opt%=*}
+		fi
+
+		case $opt in
+		-b|--builddir) builddir="$value" ; shift;;
+		-s|--sourcesdir) sourcesdir="$value" ; shift;;
+		-d|--deploytype) deploytype="$value" ; shift;;
+		-p|--deployparams) deployparams="$value" ; shift;;
+		-w|--workdir) workdir="$value" ; shift;;
+		--board) board="$value" ;;
 		(--) shift; break;;
-		(-*) logInfo "$0: Error - Unrecognized option $1" 1>&2; exit 1;;
+		(-*) logInfo "$0: Error - Unrecognized option $opt" 1>&2; exit 1;;
 		(*) break;;
 		esac
 		shift
 	done
+
+	if [[ "$board" ]]; then
+		if [[ "$CHROMEOS_CHROOT" != 1 ]]; then
+			logInfo "--board parameter can be only used inside CrOS SDK"
+			exit 1
+		fi
+		local kerndir=`find /build/$board/var/db/pkg/sys-kernel/ -type f -name "chromeos-kernel-*"`
+		kerndir=`basename $kerndir`
+		kerndir=${kerndir%-9999*}
+		[[ "$builddir" == "." ]] && builddir="/build/$board/var/cache/portage/sys-kernel/$kerndir"
+	fi
 
 	builddir=${builddir%/}
 	workdir=${workdir%/}
