@@ -2,7 +2,6 @@
 # Author: Marek Maślanka
 # Project: KernelHotReload
 
-. ./header.sh
 . ./common.sh
 
 OPTIND=1         # Reset in case getopts has been used previously in the shell.
@@ -93,13 +92,27 @@ main()
 	local sourcesdir="."
 	local deploytype=""
 	local deployparams=""
-	local workdir='workdir'
+	local workdir="workdir"
 
-	[[ "$1" != "-" ]] && builddir=$1
-	[[ "$2" != "-" ]] && sourcesdir=$2
-	[[ "$3" != "-" ]] && deploytype=$3
-	[[ "$4" != "-" ]] && deployparams=$4
-	[[ "$5" != "-" ]] && workdir=$5
+	if ! options=$(getopt -u -o b:s:d:p:w: -l builddir:,sourcesdir:,deploytype:,deployparams:,workdir: -- "$@")
+	then
+		exit 1
+	fi
+
+	while [ $# -gt 0 ]
+	do
+		case $1 in
+		-b|--builddir) builddir="$2" ; shift;;
+		-s|--sourcesdir) sourcesdir="$2" ; shift;;
+		-d|--deploytype) deploytype="$2" ; shift;;
+		-p|--deployparams) deployparams="$2" ; shift;;
+		-w|--workdir) workdir="$2" ; shift;;
+		(--) shift; break;;
+		(-*) logInfo "$0: Error - Unrecognized option $1" 1>&2; exit 1;;
+		(*) break;;
+		esac
+		shift
+	done
 
 	builddir=${builddir%/}
 	workdir=${workdir%/}

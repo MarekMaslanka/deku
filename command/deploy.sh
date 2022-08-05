@@ -27,7 +27,7 @@ main()
 	fi
 	validateKernels
 
-	bash $HELPERS_DIR/build.sh
+	bash $COMMANDS_DIR/build.sh
 	local res=$?
 	[ $res != 0 ] && [ $res != 1 ] && exit 1
 

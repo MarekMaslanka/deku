@@ -33,8 +33,8 @@ export HOTRELOAD_SCRIPT=khr_reload.sh
 # file where kernel version is stored
 export KERNEL_VERSION_FILE="$workdir/version"
 
-# helper script dir
-export HELPERS_DIR=helper
+# commands script dir
+export COMMANDS_DIR=command
 
 # generate new module instead manipulate on .relah
 export MODULE_FROM_SCRATCH=1
