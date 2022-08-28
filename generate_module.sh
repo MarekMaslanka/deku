@@ -77,6 +77,54 @@ prepareToBuild()
 	echo 'MODULE_LICENSE("GPL");' >> "$moduledir/$basename"
 }
 
+cmdBuildFile()
+{
+	local srcfile=$1
+	local file="${srcfile##*/}"
+	local dir=`dirname "$srcfile"`
+	local cmdfile="$BUILD_DIR/$dir/.${file/.c/.o.cmd}"
+	[[ ! -f $cmdfile ]] && return
+	local skipparam=("-o")
+	local newcmd=()
+	local cmd=`head -n 1 $cmdfile`
+	cmd="${cmd#*=}"
+	local skiparg=0
+	for opt in $cmd; do
+		[[ $skiparg != 0 ]] && { skiparg=0; continue; }
+		if [[ $opt == *"="* ]]; then
+			local param="${opt%%=*}"
+			local arg="${opt#*=}"
+			[[ " ${skipparam[*]} " =~ " ${param} " ]] && continue
+		else
+			[[ " ${skipparam[*]} " =~ " ${opt} " ]] && { skiparg=1; continue; }
+		fi
+		newcmd+=("$opt")
+	done
+	unset 'newcmd[${#newcmd[@]}-1]'
+	newcmd+=("-I$SOURCE_DIR/$dir")
+	echo "${newcmd[*]}"
+}
+
+buildFile()
+{
+	local srcfile=$1
+	local compilefile=$2
+	local outfile=$3
+	local separatesections=1
+	cmd=$(cmdBuildFile "$srcfile")
+	[[ $cmd == "" ]] && { logInfo "Can't find command to build $srcfile"; return 1; }
+	[[ $outfile != /* ]] && outfile="`pwd`/$outfile"
+	[[ $compilefile != /* ]] && compilefile="`pwd`/$compilefile"
+	[[ $separatesections != 0 ]] && cmd+=" -ffunction-sections -fdata-sections"
+	cmd+=" -o $outfile $compilefile"
+	cd "$LINUX_HEADERS"
+	eval "$cmd"
+	local res=$?
+	cd $OLDPWD
+	[[ $res != 0 ]] && logInfo "Failed to build $srcfile"
+	return $res
+}
+
 buildModules()
 {
 	local moduledir=$1
@@ -321,11 +369,21 @@ main()
 		cp "$SOURCE_DIR/$file" "$moduledir/$basename"
 		echo -n "$file" > "$moduledir/$FILE_SRC_PATH"
 
-		logInfo "Use kbuild to build modules"
-		generateMakefile "$moduledir/Makefile" "$file"
+		local usekbuild=0
+		buildFile $file "$moduledir/_$basename" "$moduledir/_$filename.o"
+		usekbuild=$?
+		if [[ $usekbuild == 0 ]]; then
+			buildFile $file "$moduledir/$basename" "$moduledir/$filename.o"
+			usekbuild=$?
+		fi
 
-		prepareToBuild "$moduledir" "$basename"
-		buildModules "$moduledir"
+		if [[ $usekbuild != 0 ]]; then
+			logInfo "Use kbuild to build modules"
+			generateMakefile "$moduledir/Makefile" "$file"
+
+			prepareToBuild "$moduledir" "$basename"
+			buildModules "$moduledir"
+		fi
 
 		if generateDiffObject "$moduledir" "$file"; then
 			logInfo "No valid changes found in '$file'"
