@@ -1,34 +1,42 @@
 #!/bin/bash
 # Author: Marek Maślanka
 # Project: KernelHotReload
+# URL: https://github.com/MarekMaslanka/KernelHotReload
+#
+# Common functions
 
 logDebug()
 {
 	[[ "$LOG_LEVEL" > 0 ]] && return
 	echo "[DEBUG] $1"
 }
+export -f logDebug
 
 logInfo()
 {
 	[[ "$LOG_LEVEL" > 1 ]] && return
 	echo "$1"
 }
+export -f logInfo
 
 logWarn()
 {
 	[[ "$LOG_LEVEL" > 2 ]] && return
 	echo -e "$ORANGE$1$NC"
 }
+export -f logWarn
 
 logErr()
 {
 	echo -e "$1" >&2
 }
+export -f logErr
 
 logFatal()
 {
 	echo -e "$RED$1$NC" >&2
 }
+export -f logFatal
 
 filenameNoExt()
 {
@@ -36,34 +44,35 @@ filenameNoExt()
 	local basename=`basename "$1"`
 	echo ${basename%.*}
 }
+export -f filenameNoExt
 
 generateSymbols()
 {
-	local objfile=$1
-	local path=`dirname $objfile`
-	path=${path#*$BUILD_DIR}
+	local kofile=$1
+	local path=`dirname $kofile`
+	path=${path#*$MODULES_DIR}
 	local outfile="$SYMBOLS_DIR/$path/"
 	mkdir -p "$outfile"
-	outfile+=$(filenameNoExt "$objfile")
-	nm -f posix "$objfile" | cut -d ' ' -f 1,2 > "$outfile"
+	outfile+=$(filenameNoExt "$kofile")
+	nm -f posix "$kofile" | cut -d ' ' -f 1,2 > "$outfile"
 }
+export -f generateSymbols
 
 findObjWithSymbol()
 {
 	local sym=$1
 	local srcfile=$2
-	local builddir=$3
 
+	grep -q "\b$sym\b" "$SYSTEM_MAP" && { echo vmlinux; return; }
 	local out=`grep -lr "\b$sym\b" $SYMBOLS_DIR`
 	[ "$out" != "" ] && { echo $(filenameNoExt "$out"); return; }
 
-	local ofile=$(filenameNoExt "$srcfile").o
 	local srcpath=$SOURCE_DIR/
-	local buildpath=$builddir/
+	local modulespath=$MODULES_DIR/
 	srcpath+=`dirname $srcfile`
-	buildpath+=`dirname $srcfile`
+	modulespath+=`dirname $srcfile`
 	while true; do
-		local files=`find "$buildpath" -maxdepth 1 -type f -name "*.ko"`
+		local files=`find "$modulespath" -maxdepth 1 -type f -name "*.ko"`
 		if [ "$files" != "" ]; then
 			while read -r file; do
 				symfile=$(filenameNoExt "$file")
@@ -76,76 +85,31 @@ findObjWithSymbol()
 		fi
 		[ -f "$srcpath/Kconfig" ] && break
 		srcpath+="/.."
-		buildpath+="/.."
+		modulespath+="/.."
 	done
 
 	# not found
 }
+export -f findObjWithSymbol
 
-getTagLine()
+getKernelVersion()
 {
-	local tagname=$1
-	local tagtype=$2
-	local tagsfile=$3
-	sed -n "s/^$tagname\s\+$tagtype\s\+\(\b[0-9]\+\b\).\+/\1/p" "$tagsfile"
+	sed -n "s/.*UTS_VERSION\ \"\(.\+\)\"$/\1/p" "$LINUX_HEADERS/include/generated/compile.h"
 }
+export -f getKernelVersion
 
-getSymbolPos()
+getKernelReleaseVersion()
 {
-	local tagname=$1
-	local tagtype=$2
-	local tagsfile=$3
-	sed -n "s/^$tagname\s\+$tagtype\s\+[0-9]\+\s\+\([0-9:]\+\).\+/\1/p" "$tagsfile"
+	sed -n "s/.*UTS_RELEASE\ \"\(.\+\)\"$/\1/p" "$LINUX_HEADERS/include/generated/utsrelease.h"
 }
-
-restoreSymbol()
-{
-	local module=$1
-	local tagname=$2
-
-	local infile=$(intermediateSrcFile $module)
-	local outfile="$workdir/$module/$module.c"
-	local tagsfile="$workdir/$module/$module.tag"
-	local isvar=0
-
-	local poses=$(getSymbolPos "$tagname" "function" "$tagsfile")
-	[[ "$poses" == "" ]] && { poses=$(getSymbolPos "$tagname" "variable" "$tagsfile"); isvar=1; }
-	[[ "$poses" == "" ]] && { echo "Can not restore symbol $tagname in $infile"; return 1; }
-	while read -r pos; do
-		local arr=(${pos//:/ })
-		local offset=${arr[0]}
-		local end=${arr[1]}
-		[[ $isvar == 1 ]] && end=${arr[2]}
-		local cnt=$((end-offset))
-		dd if=$infile of=$outfile skip=$offset seek=$offset count=$cnt bs=1 status=none conv=notrunc
-	done <<< "$poses"
-}
-
-generateModuleId()
-{
-	local file=$1
-	local khr_module_id=`git -C $workdir diff -W -- $file | cksum | cut -d' ' -f1`
-	printf "0x%08x" $khr_module_id
-}
-
-generateAndSaveModuleId()
-{
-	local file=$1
-	local module=$2
-	local khr_module_id=$(generateModuleId "$file")
-	echo -n "$khr_module_id" > "$workdir/$module/$module.id"
-}
-
-getCurrentKernelVersion()
-{
-	grep -a -m 1 "Linux version" "$BUILD_DIR/vmlinux" | tr -d '\0'
-}
+export -f getKernelReleaseVersion
 
 # find modified files
 modifiedFiles()
 {
-	git -C $workdir diff --name-only | grep -E "*.c$"
+	git -C "$workdir" diff --name-only | grep -E ".+\.[ch]$"
 }
+export -f modifiedFiles
 
 generateModuleName()
 {
@@ -154,9 +118,4 @@ generateModuleName()
 	crc=$( printf "%08x" $crc );
 	echo khr_${crc}_$(filenameNoExt "$file")
 }
-
-intermediateSrcFile()
-{
-	local module=$1
-	echo "$workdir/$module/$module$ISRC_FILE_EXT"
-}
+export -f generateModuleName

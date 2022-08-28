@@ -1,10 +1,7 @@
 #!/bin/bash
 # Author: Marek Maślanka
 # Project: KernelHotReload
-
-. ./common.sh
-
-OPTIND=1         # Reset in case getopts has been used previously in the shell.
+# URL: https://github.com/MarekMaslanka/KernelHotReload
 
 echo "Show diff kernel hot reload"
 

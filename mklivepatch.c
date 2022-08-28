@@ -1,6 +1,9 @@
 /*
 * Author: Marek Maślanka
 * Project: KernelHotReload
+* URL: https://github.com/MarekMaslanka/KernelHotReload
+*
+* Convert kernel module to livepatch module
 */
 
 #include <errno.h>

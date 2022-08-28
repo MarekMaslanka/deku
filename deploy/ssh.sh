@@ -1,8 +1,7 @@
 #!/bin/bash
 # Author: Marek Maślanka
 # Project: KernelHotReload
-
-. ./common.sh
+# URL: https://github.com/MarekMaslanka/KernelHotReload
 
 SSHPARAMS=""
 SCPPARAMS=""

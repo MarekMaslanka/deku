@@ -1,28 +1,28 @@
 #!/bin/bash
 # Author: Marek Maślanka
 # Project: KernelHotReload
-
-. ./common.sh
+# URL: https://github.com/MarekMaslanka/KernelHotReload
 
 validateKernels()
 {
 	local kernelrelease=`bash deploy/$DEPLOY_TYPE.sh --kernel-release`
 	local kernelversion=`bash deploy/$DEPLOY_TYPE.sh --kernel-version`
-	local localversion=$(getCurrentKernelVersion)
+	local localrelease=$(getKernelReleaseVersion)
+	local localversion=$(getKernelVersion)
 	local mismatch=""
-	[[ $localversion != *"$kernelrelease"* ]] && mismatch="release:$kernelrelease"
-	[[ $mismatch != "" ]] && [[ $localversion != *"$kernelrelease"* ]] && mismatch="version:$kernelversion"
+	[[ $localrelease != *"$kernelrelease"* ]] && mismatch=" release:$kernelrelease"
+	[[ $localversion != *"$kernelversion"* ]] && mismatch+=" version:$kernelversion"
 	[[ $mismatch == "" ]] && return
-	>&2 echo -e "${RED}Kernel image mismatch ($mismatch).${NC}"
-	>&2 echo "Kernel on the device: $kernelrelease $kernelversion"
-	>&2 echo "Kernel in the build directory: $localversion"
+	logErr "Kernel image mismatch:$mismatch."
+	logInfo "Kernel on the device: $kernelrelease $kernelversion"
+	logInfo "Kernel on the host: $localrelease $localversion"
 	return 1
 }
 
 main()
 {
 	if [ "$DEPLOY_TYPE" == "" ] || [ "$DEPLOY_PARAMS" == "" ]; then
-		echo -e "${ORANGE}Please setup connection parameters to target device${NC}"
+		logWarn "Please setup connection parameters to target device"
 		exit
 	fi
 	validateKernels
@@ -41,8 +41,8 @@ main()
 		local module=${line% *}
 		local id=${line##* }
 		local moduledir="$workdir/$module/"
-		[ ! -f "$moduledir/$module.id" ] && { modulestounload+=" -$module"; continue; }
-		local localid=`cat "$moduledir/$module.id"`
+		[ ! -f "$moduledir/id" ] && { modulestounload+=" -$module"; continue; }
+		local localid=`cat "$moduledir/id"`
 		# to invalidate remove module from workdir if has been changed 
 		[ "$id" == "$localid" ] && modulesontarget+=$module
 	done <<< $(bash deploy/$DEPLOY_TYPE.sh --getids)

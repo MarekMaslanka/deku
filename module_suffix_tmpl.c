@@ -1,6 +1,7 @@
 /*
 * Author: Marek Maślanka
 * Project: KernelHotReload
+* URL: https://github.com/MarekMaslanka/KernelHotReload
 */
 
 static int hotreload_init(void)

@@ -1,46 +1,98 @@
 #!/bin/bash
 # Author: Marek Maślanka
 # Project: KernelHotReload
+# URL: https://github.com/MarekMaslanka/KernelHotReload
+# 
+# Main file for KernelHotReload
 
+. ./header.sh
 . ./common.sh
-. ./header.sh
-
-[ -e $CONFIG_FILE ] && . $CONFIG_FILE
-
-. ./header.sh
-
-export BUILD_DIR=$BUILD_DIR
-export SOURCE_DIR=$SOURCE_DIR
-export DEPLOY_TYPE=$DEPLOY_TYPE
-export DEPLOY_PARAMS=$DEPLOY_PARAMS
-[ -n $USE_LLVM ] && export USE_LLVM=$USE_LLVM
-
-# detect whether we're inside a chromeos chroot
-[[ -e /etc/cros_chroot_version ]] && export CHROMEOS_CHROOT=1
 
 showHelp()
 {
-	echo "TODO: implement"
+	echo "KernelHotReload is a tool that allow quick apply changes to the running kernel on the device.
+The changes provided by KernelHotReload lives in the kernel util next reboot.
+
+Usage:
+    kernel_hot_reload.sh [OPTIONS...] COMMAND
+Commands list:
+    init   - initialize KernelHotReload. Create a workdir directory where the configuration file, current state of the kernel source code and kernel image version on the device are stored,
+    build  - build KernelHotReload modules which are livepatch kernel's modules,
+    sync   - synchronize current state of source code and kernel image. It must be used when the kernel was build by user and flashed to the device,
+    deploy - build and deploy the changes to the device.
+
+'init' command options:
+    -b <PATH_TO_KERNEL_BUILD_DIR> [-s <PATH_TO_KERNEL_SOURCES_DIR>] [--board=<CHROMEBOOK_BOARD_NAME>] -d ssh -p <USER@DUT_ADDRESS[:PORT]>
+
+    -b path to kernel build directory,
+    -s path to kernel sources directory. Use this parameter if initialization process can't find kernel sources dir,
+    --board (Only avaiable inside ChromiumOS SDK) board name. Meaning of this parameter is the same as in the ChromiumOS SDK. If this parameter is used then -b ans -s parameters can be skipped,
+    -d method used to upload and deploy livepatch modules to the DUT. Currently only the 'ssh' is supported,
+    -p parameters for deploy method. For the 'ssh' deploy method, pass the user and DUT address. Optional pass the port number after colon. Additional ssh parameters like '-o' can be passed after space,
+       The given user must be able to load and unload kernel modules. The SSH must be configured to use key-based authentication.
+
+	Example usage:
+		./kernel_hot_reload.sh -b /home/user/linux_build -d ssh -p root@192.168.0.100:2233 init
+
+	Example usage when custom key-based authentication key is used for ssh connection:
+		./kernel_hot_reload.sh -b /home/user/linux_build -d ssh -p \"root@192.168.0.100 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/key_rsa\" init
+	"
+}
+
+exportVars()
+{
+	export workdir="$1"
+	. ./header.sh
+	# detect whether we're inside a chromeos chroot
+	[[ -e /etc/cros_chroot_version ]] && export CHROMEOS_CHROOT=1
+
+	[[ ! -f "$CONFIG_FILE" ]] && return
+	while read -r line; do
+		[[ "$line" != "" ]] && eval export "$line"
+	done < "$CONFIG_FILE"
 }
 
 main()
 {
-	for opt in "$@"; do
-		[[ $opt == "-h" ]] && { showHelp; exit; }
-		[[ $opt == "-"* ]] && continue
-		if [[ -f "$COMMANDS_DIR/$opt.sh" ]]; then
-			if [[ "$opt" == "init" ]]; then
-				bash "$COMMANDS_DIR/$opt.sh" "$@"
-				local ret=$?
-				[[ "$ret" != 0 ]] && exit $ret
-				bash ${0} sync
-				logInfo "Init done"
-			else
-				bash "$COMMANDS_DIR/$opt.sh" "$workdir"
-			fi
-			exit
+	local workdir="$DEFAULT_WORKDIR"
+	for ((i=1; i<=$#; i++))
+	do
+		local opt=${!i}
+		if [[ $opt == "-w" ]]; then
+			((i++))
+			workdir="${!i}"
+			break
 		fi
 	done
+	exportVars "$workdir"
+
+	for ((i=1; i<=$#; i++))
+	do
+		local opt=${!i}
+		[[ $opt == "-h" || $opt == "--help" ]] && { showHelp; exit; }
+		if [[ $opt == "-w" ]]; then
+			((i++))
+			continue
+		fi
+		if [[ -f "$COMMANDS_DIR/$opt.sh" ]]; then
+			local ret=0
+			if [[ "$opt" == "init" ]]; then
+				bash "$COMMANDS_DIR/$opt.sh" "$@"
+				ret=$?
+				[[ "$ret" != 0 ]] && exit $ret
+				bash ${0} -w "$workdir" sync
+				ret=$?
+				[[ "$ret" != 0 ]] && exit $ret
+				logInfo "Init done"
+			else
+				bash "$COMMANDS_DIR/$opt.sh"
+				ret=$?
+			fi
+			exit $ret
+		fi
+	done
+
+	showHelp
 }
 
 main "$@"

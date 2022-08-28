@@ -1,15 +1,14 @@
 #!/bin/bash
 # Author: Marek Maślanka
 # Project: KernelHotReload
-
-. ./common.sh
+# URL: https://github.com/MarekMaslanka/KernelHotReload
 
 main()
 {
 	local syncversion=$(<"$KERNEL_VERSION_FILE")
-	local localversion=$(getCurrentKernelVersion)
+	local localversion=$(getKernelVersion)
 	if [[ "$syncversion" != "$localversion" ]]; then
-		echo -e "${ORANGE}Kernel image in build directory has changed from last run. You must undo any changes made after kernel was rebuild and run 'make sync'.${NC}"
+		logWarn "Kernel image in build directory has changed from last run. You must undo any changes made after kernel was rebuild and run 'make sync'."
 		exit 2
 	fi
 

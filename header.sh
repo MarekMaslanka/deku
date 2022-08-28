@@ -1,28 +1,27 @@
 # Author: Marek Maślanka
 # Project: KernelHotReload
+# URL: https://github.com/MarekMaslanka/KernelHotReload
 
-export workdir='workdir'
+# default name for workdir
+export DEFAULT_WORKDIR=workdir
 
-# extension for file with list of functions to replace
-export SYMBOLS_FILE_EXT=sym
+# file with modiefied symbols
+export MOD_SYMBOLS_FILE=modsym
 
-# file with functions that needs to be added from source file
-export MISS_FUN_FILE=$workdir/miss
+# file with module name where file was built-in
+export FILE_OBJECT=obj
 
-# extension for file with functions that need relocations
-export REL_FILE_EXT=rel
-
-# extension for intermediate source code file
-export ISRC_FILE_EXT=_.c
+# file with source file path
+export FILE_SRC_PATH=path
 
 # file for note in module
 export NOTE_FILE=note
 
 # dir with kernel's object symbols
-export SYMBOLS_DIR=$workdir/symbols
+export SYMBOLS_DIR="$workdir/symbols"
 
 # configuration file
-export CONFIG_FILE=$workdir/config
+export CONFIG_FILE="$workdir/config"
 
 # template for hotreload module suffix
 export MODULE_SUFFIX_FILE=module_suffix_tmpl.c
@@ -30,14 +29,14 @@ export MODULE_SUFFIX_FILE=module_suffix_tmpl.c
 # hot reload script
 export HOTRELOAD_SCRIPT=khr_reload.sh
 
+# prefix for functions that manages hotreload
+export KHR_FUN_PREFIX="__khr_fun_"
+
 # file where kernel version is stored
 export KERNEL_VERSION_FILE="$workdir/version"
 
 # commands script dir
 export COMMANDS_DIR=command
-
-# generate new module instead manipulate on .relah
-export MODULE_FROM_SCRATCH=1
 
 # is inside chromeos sdk
 export CHROMEOS_CHROOT=0

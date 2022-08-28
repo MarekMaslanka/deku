@@ -2,21 +2,18 @@
 [Prerequisites](#prerequisites)  
 [Init KernelHotReload](#init)  
 [Usage](#usage)  
-[Notes](#notes)  
 [Constrains](#constrains)  
 
 ---
 
 <a name="prerequisites"></a>
 ## Prerequisites
- - Install `exuberant-ctags`
  - Install `libelf`
  - Enable `CONFIG_LIVEPATCH` in kernel config  
  Above flag depends on the `KALLSYMS_ALL` flag that isn't enabled by default.
  - SSH Key-Based authentication to the DUT
 ***
 _**For ChromiumOS developers**_  
- - Install ctags in cros sdk using: `sudo emerge ctags`
  - `libelf` is already installed in cros sdk
  - To enable `CONFIG_LIVEPATCH` flag the following commands can be used:
   ```
@@ -84,10 +81,6 @@ make build
 command. Modules can be found in `workdir/khr_XXXX/khr_XXXX.ko`
 
 Changes applied in the kernel on the DUT are not persistent and live to the next reboot. After every reboot the `deploy` must be performed.
-
-<a name="notes"></a>
-## Notes
-The KernelHotReload is not a perfect tool. Most of the work is done by modifying the source code files, hence source files in kernel with unconventional format may not be supported yet.
 
 <a name="constrains"></a>
 ## Constrains

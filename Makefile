@@ -1,21 +1,30 @@
+# Author: Marek Maślanka
+# Project: KernelHotReload
+# URL: https://github.com/MarekMaslanka/KernelHotReload
+
 .PHONY: deploy
 
-all: codeutils mklivepatch
+all: mklivepatch elfutils
 
-codeutils: codeutils.c
-	gcc codeutils.c -o codeutils
+WORKDIR=
+ifdef workdir
+	WORKDIR=-w $(workdir)
+endif
 
 mklivepatch: mklivepatch.c
 	gcc mklivepatch.c -lelf -o mklivepatch
 
+elfutils: elfutils.c
+	gcc elfutils.c -g -lelf -lopcodes -o elfutils
+
 clean:
-	rm -f codeutils mklivepatch
+	rm -f mklivepatch elfutils
 
 deploy:
-	./kernel_hot_reload.sh deploy
+	./kernel_hot_reload.sh $(WORKDIR) deploy
 
 build:
-	./kernel_hot_reload.sh build
+	./kernel_hot_reload.sh $(WORKDIR) build
 
 sync:
-	./kernel_hot_reload.sh sync
+	./kernel_hot_reload.sh $(WORKDIR) sync

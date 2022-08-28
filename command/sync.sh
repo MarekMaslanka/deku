@@ -1,8 +1,7 @@
 #!/bin/bash
 # Author: Marek Maślanka
 # Project: KernelHotReload
-
-. ./common.sh
+# URL: https://github.com/MarekMaslanka/KernelHotReload
 
 regenerateSymbols()
 {
@@ -10,23 +9,16 @@ regenerateSymbols()
 	[ "$files" == "" ] && return
 	while read -r file; do
 		file=${file#*$SYMBOLS_DIR/}
-		generateSymbols "$BUILD_DIR/$file.o"
+		generateSymbols "$MODULES_DIR/$file.ko"
 	done <<< "$files"
 }
 
 main()
 {
-	echo "Synchronize kernel hot reload"
-	echo "Sources dir: $SOURCE_DIR"
-	echo "Build dir: $BUILD_DIR"
-	echo "Work dir: $workdir"
-	echo "Symbols dir: $SYMBOLS_DIR"
-
-	echo "Synchronize..."
+	logInfo "Synchronize..."
 	rm -rf "$workdir"/khr_*
-	getCurrentKernelVersion > "$KERNEL_VERSION_FILE"
+	getKernelVersion > "$KERNEL_VERSION_FILE"
 	regenerateSymbols
-	generateSymbols "$BUILD_DIR/vmlinux"
 	git --work-tree="$SOURCE_DIR" --git-dir="$workdir/.git" add "$SOURCE_DIR/*"
 }
 

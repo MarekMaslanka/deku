@@ -1,3 +1,7 @@
+.vscode/
 workdir
-codeutils
+workdir_test
 mklivepatch
+elfutils
+test/rootfs.img
+test/testing_rsa

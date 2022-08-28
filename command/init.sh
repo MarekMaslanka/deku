@@ -1,10 +1,7 @@
 #!/bin/bash
 # Author: Marek Maślanka
 # Project: KernelHotReload
-
-. ./common.sh
-
-OPTIND=1         # Reset in case getopts has been used previously in the shell.
+# URL: https://github.com/MarekMaslanka/KernelHotReload
 
 isKernelSroucesDir()
 {
@@ -66,8 +63,8 @@ isKernelBuildDir()
 
 isLLVMUsed()
 {
-	local builddir=$1
-	grep -q "clang" "$builddir/vmlinux"
+	local linuxheaders=$1
+	grep -q "CONFIG_CC_IS_CLANG=y" "$linuxheaders/.config"
 }
 
 enableKLP()
@@ -93,9 +90,10 @@ main()
 	local deploytype=""
 	local deployparams=""
 	local board=""
-	local workdir="workdir"
+	local prebuild=""
+	local postbuild=""
 
-	if ! options=$(getopt -u -o b:s:d:p:w: -l builddir:,sourcesdir:,deploytype:,deployparams:,board:,workdir: -- "$@")
+	if ! options=$(getopt -u -o b:s:d:p:w: -l builddir:,sourcesdir:,deploytype:,deployparams:,prebuild:,postbuild:,board:,workdir: -- "$@")
 	then
 		exit 1
 	fi
@@ -116,6 +114,8 @@ main()
 		-p|--deployparams) deployparams="$value" ; shift;;
 		-w|--workdir) workdir="$value" ; shift;;
 		--board) board="$value" ;;
+		--prebuild) prebuild="$value" ;;
+		--postbuild) postbuild="$value" ;;
 		(--) shift; break;;
 		(-*) logInfo "$0: Error - Unrecognized option $opt" 1>&2; exit 1;;
 		(*) break;;
@@ -132,10 +132,13 @@ main()
 		kerndir=`basename $kerndir`
 		kerndir=${kerndir%-9999*}
 		[[ "$builddir" == "." ]] && builddir="/build/$board/var/cache/portage/sys-kernel/$kerndir"
+		prebuild="bash integration/cros_prebuild.sh"
+		postbuild="bash integration/cros_postbuild.sh"
 	fi
 
 	builddir=${builddir%/}
 	workdir=${workdir%/}
+	local linuxheaders="$builddir"
 
 	[[ "$deploytype" == "" ]] && { logErr "Please specify deploy type -d [ssh]"; exit 2; }
 	[[ "$deployparams" == "" ]] && { logErr "Please specify parameters for deploy \"$deploytype\". Use -p paramer"; exit 1; }
@@ -145,7 +148,7 @@ main()
 	isKernelSroucesDir $sourcesdir || sourcesdir="$builddir"
 
 	sourcesdir=${sourcesdir%/}
-	
+
 	[ "$(git --version)" ] || { logErr "\"git\" could not be found. Please install \"git\""; exit 2; }
 	[ "$(ctags --version)" ] || { logErr "\"ctags\" could not be found. Please install \"exuberant-ctags\""; exit 1; }
 
@@ -156,7 +159,7 @@ main()
 
 	if [ -d "$workdir" ]
 	then
-		[ "$(ls -A $workdir)" ] && { logErr "Director \"$workdir\" is not empty"; exit 2; }
+		[ "$(ls -A $workdir)" ] && { logErr "Directory \"$workdir\" is not empty"; exit 2; }
 	else
 		mkdir -p "$workdir"
 	fi
@@ -203,7 +206,13 @@ main()
 	echo "SOURCE_DIR=\"$sourcesdir\"" >> $CONFIG_FILE
 	echo "DEPLOY_TYPE=\"$deploytype\"" >> $CONFIG_FILE
 	echo "DEPLOY_PARAMS=\"$deployparams\"" >> $CONFIG_FILE
-	isLLVMUsed $builddir && echo "USE_LLVM=\"LLVM=1\"" >> $CONFIG_FILE
+	echo "MODULES_DIR=\"$builddir\"" >> $CONFIG_FILE
+	echo "LINUX_HEADERS=\"$linuxheaders\"" >> $CONFIG_FILE
+	echo "SYSTEM_MAP=\"$builddir/System.map\"" >> $CONFIG_FILE
+	[[ "$prebuild" != "" ]] && echo "PRE_BUILD=\"$prebuild\"" >> $CONFIG_FILE
+	[[ "$postbuild" != "" ]] && echo "POST_BUILD=\"$postbuild\"" >> $CONFIG_FILE
+	[[ "$board" != "" ]] && echo "CROS_BOARD=\"$board\"" >> $CONFIG_FILE
+	isLLVMUsed "$linuxheaders" && echo "USE_LLVM=\"LLVM=1\"" >> $CONFIG_FILE
 	echo "" >> $CONFIG_FILE
 	git --work-tree="$sourcesdir" --git-dir="$workdir/.git" init
 
