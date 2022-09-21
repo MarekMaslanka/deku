@@ -11,11 +11,16 @@ ifdef workdir
 	WORKDIR=-w $(workdir)
 endif
 
+ELFUTILS_FLAGS=-lelf
+ifdef workdir
+	ELFUTILS_FLAGS=-DSUPPORT_DISASSEMBLY -lopcodes
+endif
+
 mklivepatch: mklivepatch.c
 	gcc mklivepatch.c -lelf -o mklivepatch
 
 elfutils: elfutils.c
-	gcc elfutils.c -g -lelf -lopcodes -o elfutils
+	gcc elfutils.c $(ELFUTILS_FLAGS) -o elfutils
 
 clean:
 	rm -f mklivepatch elfutils

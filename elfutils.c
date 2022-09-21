@@ -17,10 +17,12 @@
 
 #include <gelf.h>
 
+#ifdef SUPPORT_DISASS
 #define PACKAGE 1			//requred by libbfd
 #include <dis-asm.h>
 
 #define MAX_DISASS_LINE_LEN 256
+#endif
 
 static bool ShowDebugLog = 1;
 #define LOG_ERR(fmt, ...)                                   \
@@ -403,6 +405,7 @@ static SymbolData getSymbolData(Elf *elf, const char *name, char type, bool modR
 	return result;
 }
 
+#ifdef SUPPORT_DISASSEMBLE
 static int disasmPrintf(void *buf, const char *format, ...)
 {
 	char localBuf[MAX_DISASS_LINE_LEN];
@@ -467,6 +470,7 @@ char *disassembleBytes(uint8_t *inputBuf, size_t inputBufSize, DisasmData *data)
 
 	return buf[0];
 }
+#endif
 
 static uint32_t calcSymHash(Elf *elf, const GElf_Sym *sym)
 {
@@ -1040,7 +1044,11 @@ static void printCallees(Symbol *s, size_t *callStack)
 
 static void help(const char *execName)
 {
-	error(EXIT_FAILURE, EINVAL, "Usage: %s [-diff|--callchain|--extract|--changeCallSymbol|--disassemble] ...", execName);
+	error(EXIT_FAILURE, EINVAL, "Usage: %s [-diff|--callchain|--extract|--changeCallSymbol"
+#ifdef SUPPORT_DISASSEMBLE
+	"|--disassemble"
+#endif
+	"] ...", execName);
 }
 
 static void showDiff(int argc, char *argv[])
@@ -1278,6 +1286,7 @@ static void changeCallSymbol(int argc, char *argv[])
 		LOG_ERR("No relocation has been replaced");
 }
 
+#ifdef SUPPORT_DISASSEMBLE
 static void disassemble(int argc, char *argv[])
 {
 	char *filePath = NULL;
@@ -1319,6 +1328,7 @@ static void disassemble(int argc, char *argv[])
 	free(filePath);
 	close(fd);
 }
+#endif
 
 int main(int argc, char *argv[])
 {
@@ -1326,7 +1336,9 @@ int main(int argc, char *argv[])
 	bool showCallChain = false;
 	bool extractSym = false;
 	bool changeCallSym = false;
+#ifdef SUPPORT_DISASSEMBLE
 	bool disasm = false;
+#endif
 	for (int i = 1; i < argc; i++)
 	{
 		if (strcmp(argv[i], "--diff") == 0)
@@ -1337,8 +1349,10 @@ int main(int argc, char *argv[])
 			extractSym = true;
 		if (strcmp(argv[i], "--changeCallSymbol") == 0)
 			changeCallSym = true;
+#ifdef SUPPORT_DISASSEMBLE
 		if (strcmp(argv[i], "--disassemble") == 0)
 			disasm = true;
+#endif
 		if (strcmp(argv[i], "-V") == 0)
 			ShowDebugLog = true;
 	}
@@ -1352,8 +1366,10 @@ int main(int argc, char *argv[])
 		extractSymbols(argc - 1, argv + 1);
 	else if (changeCallSym)
 		changeCallSymbol(argc - 1, argv + 1);
+#ifdef SUPPORT_DISASSEMBLE
 	else if (disasm)
 		disassemble(argc - 1, argv + 1);
+#endif
 	else
 		help(argv[0]);
 	return 0;
