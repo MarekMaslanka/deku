@@ -1,7 +1,7 @@
 /*
 * Author: Marek Maślanka
-* Project: KernelHotReload
-* URL: https://github.com/MarekMaslanka/KernelHotReload
+* Project: DEKU
+* URL: https://github.com/MarekMaslanka/deku
 *
 * Convert kernel module to livepatch module
 */
@@ -183,8 +183,8 @@ static void addVarSymbolToRelocate(Elf *elf, const char *objName)
 				goto checkVarName;
 			continue;
 				checkVarName:
-			if (strcmp("khr_patch", name) && strcmp("khr_objs", name) &&
-				strcmp("khr_funcs", name))
+			if (strcmp("deku_patch", name) && strcmp("deku_objs", name) &&
+				strcmp("deku_funcs", name))
 			{
 				char *klpName = calloc(strlen(name) + strlen(objName) + 16, sizeof(char *));
 				CHECK_ALLOC(klpName);
@@ -287,9 +287,9 @@ static void removeFunctionSymbols(Elf *elf)
 		if (sym.st_shndx == STT_FUNC)
 		{
 			if (strlen(name) > 0 &&
-				strcmp("KHR_MODULE_show", name) &&
-				strcmp("hotreload_init", name) &&
-				strcmp("hotreload_exit", name) &&
+				strcmp("DEKU_MODULE_show", name) &&
+				strcmp("deku_init", name) &&
+				strcmp("deku_exit", name) &&
 				strcmp("cleanup_module", name) &&
 				strcmp("init_module", name))
 			{

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Author: Marek Maślanka
-# Project: KernelHotReload
-# URL: https://github.com/MarekMaslanka/KernelHotReload
+# Project: DEKU
+# URL: https://github.com/MarekMaslanka/deku
 #
 # Common functions
 
@@ -116,6 +116,6 @@ generateModuleName()
 	local file=$1
 	local crc=`cksum <<< "$file" | cut -d' ' -f1`
 	crc=$( printf "%08x" $crc );
-	echo khr_${crc}_$(filenameNoExt "$file")
+	echo deku_${crc}_$(filenameNoExt "$file")
 }
 export -f generateModuleName

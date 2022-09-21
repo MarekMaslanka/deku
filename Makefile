@@ -1,6 +1,6 @@
 # Author: Marek Maślanka
-# Project: KernelHotReload
-# URL: https://github.com/MarekMaslanka/KernelHotReload
+# Project: DEKU
+# URL: https://github.com/MarekMaslanka/deku
 
 .PHONY: deploy
 
@@ -21,10 +21,10 @@ clean:
 	rm -f mklivepatch elfutils
 
 deploy:
-	./kernel_hot_reload.sh $(WORKDIR) deploy
+	./deku $(WORKDIR) deploy
 
 build:
-	./kernel_hot_reload.sh $(WORKDIR) build
+	./deku $(WORKDIR) build
 
 sync:
-	./kernel_hot_reload.sh $(WORKDIR) sync
+	./deku $(WORKDIR) sync

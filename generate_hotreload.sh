@@ -1,14 +1,14 @@
 #!/bin/bash
 # Author: Marek Maślanka
-# Project: KernelHotReload
-# URL: https://github.com/MarekMaslanka/KernelHotReload
+# Project: DEKU
+# URL: https://github.com/MarekMaslanka/deku
 #
-# Generate hotreload (livepatch) module from standard kernel module
+# Generate DEKU (livepatch) module from standard kernel module
 
 modulesList()
 {
 	local results=()
-	local modules=`find "$workdir" -maxdepth 1 -type d -regextype sed -regex ".\+/khr_[a-f0-9]\{8\}.\+" -printf "%f\n"`
+	local modules=`find "$workdir" -maxdepth 1 -type d -regextype sed -regex ".\+/deku_[a-f0-9]\{8\}.\+" -printf "%f\n"`
 
 	while read -r module; do
 		local path="$workdir/$module/$module.ko"
@@ -41,7 +41,7 @@ getSymbolsToRelocate()
 	done <<< "$out"
 	for sym in "${undsymbols[@]}"
 	do
-		[[ "$sym" == $KHR_FUN_PREFIX* ]] && continue
+		[[ "$sym" == $DEKU_FUN_PREFIX* ]] && continue
 		[[ ! "${syms[*]}" =~ "$sym" ]] && echo "$sym"
 	done
 }
@@ -141,7 +141,7 @@ main()
 			logDebug "Module does not need to adjust relocations"
 		fi
 	done <<< "$modules"
-	logInfo "Generate hot reload module. Done"
+	logInfo "Generate DEKU module. Done"
 }
 
 main $@

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Author: Marek Maślanka
-# Project: KernelHotReload
-# URL: https://github.com/MarekMaslanka/KernelHotReload
+# Project: DEKU
+# URL: https://github.com/MarekMaslanka/deku
 
 SSHPARAMS=""
 SCPPARAMS=""
@@ -13,9 +13,9 @@ remoteSh()
 	return ${PIPESTATUS[0]}
 }
 
-getLoadedKHRModules()
+getLoadedDEKUModules()
 {
-	remoteSh 'find /sys/module -name .note.khr -type f -exec cat {} \; | grep -a khr_ 2>/dev/null'
+	remoteSh 'find /sys/module -name .note.deku -type f -exec cat {} \; | grep -a deku_ 2>/dev/null'
 	echo "$REMOTE_OUT"
 }
 
@@ -38,7 +38,7 @@ originModName()
 
 main()
 {
-	local dstdir="kernelhotreload"
+	local dstdir="deku"
 	local host="${DEPLOY_PARAMS%% *}"
 	local extraparams=
 	[[ $DEPLOY_PARAMS == *" "* ]] && extraparams="${DEPLOY_PARAMS#* }"
@@ -63,7 +63,7 @@ main()
 	SCPPARAMS="$options $extraparams $scpport"
 	unset SSH_AUTH_SOCK
 
-	[[ "$1" == "--getids" ]] && { getLoadedKHRModules; return; }
+	[[ "$1" == "--getids" ]] && { getLoadedDEKUModules; return; }
 	[[ "$1" == "--kernel-release" ]] && { getKernelRelease; return; }
 	[[ "$1" == "--kernel-version" ]] && { getKernelVersion; return; }
 
@@ -111,12 +111,12 @@ main()
 	done
 	reloadscript+="\n$disablemod\n$transwait\n$rmmod$checkmod\nbreak;\nsleep 1\ndone"
 	reloadscript+="\n$insmod"
-	echo -e $reloadscript > $workdir/$HOTRELOAD_SCRIPT
+	echo -e $reloadscript > $workdir/$DEKU_RELOAD_SCRIPT
 
 	ssh $SSHPARAMS mkdir -p $dstdir
-	scp $SCPPARAMS $files $workdir/$HOTRELOAD_SCRIPT $host:$dstdir/
+	scp $SCPPARAMS $files $workdir/$DEKU_RELOAD_SCRIPT $host:$dstdir/
 	logInfo "Loading..."
-	remoteSh sh "$dstdir/$HOTRELOAD_SCRIPT 2>&1"
+	remoteSh sh "$dstdir/$DEKU_RELOAD_SCRIPT 2>&1"
 	[ $? == "0" ] && echo -e "${GREEN}Reload done${NC}" || echo -e "${RED}Reload failed!\n$REMOTE_OUT${NC}"
 }
 

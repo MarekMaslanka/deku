@@ -1,7 +1,7 @@
 #!/bin/bash
 # Author: Marek Maślanka
-# Project: KernelHotReload
-# URL: https://github.com/MarekMaslanka/KernelHotReload
+# Project: DEKU
+# URL: https://github.com/MarekMaslanka/deku
 
 kerndir=`find /build/$CROS_BOARD/var/db/pkg/sys-kernel/ -type f -name "chromeos-kernel-*"`
 kerndir=`basename $kerndir`

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Author: Marek Maślanka
-# Project: KernelHotReload
-# URL: https://github.com/MarekMaslanka/KernelHotReload
+# Project: DEKU
+# URL: https://github.com/MarekMaslanka/deku
 
 main()
 {
@@ -23,9 +23,9 @@ main()
 		[[ $moduledir == "" ]] && break
 		local module=`basename $moduledir`
 		[[ ! " ${validmodules[*]} " =~ "$module" ]] && rm -rf  "$moduledir"
-	done <<< "`find $workdir -type d -name khr_*`"
+	done <<< "`find $workdir -type d -name deku_*`"
 
-	echo "Build hot reload module"
+	echo "Build DEKU module"
 
 	bash generate_hotreload.sh
 	local res=$?

@@ -1,8 +1,8 @@
 #!/bin/bash
 # Author: Marek Maślanka
-# Project: KernelHotReload
-# URL: https://github.com/MarekMaslanka/KernelHotReload
+# Project: DEKU
+# URL: https://github.com/MarekMaslanka/deku
 
-echo "Show diff kernel hot reload"
+echo "Show diff against the kernel installed on the device"
 
 git --work-tree="$SOURCE_DIR" --git-dir="$workdir/.git" diff

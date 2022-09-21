@@ -1,7 +1,7 @@
 #!/bin/bash
 # Author: Marek Maślanka
-# Project: KernelHotReload
-# URL: https://github.com/MarekMaslanka/KernelHotReload
+# Project: DEKU
+# URL: https://github.com/MarekMaslanka/deku
 
 isKernelSroucesDir()
 {
@@ -30,15 +30,15 @@ isKernelBuildDir()
 	#include <linux/kernel.h>
 	#include <linux/module.h>
 	#include <linux/livepatch.h>
-	static int hotreload_init(void)
+	static int deku_init(void)
 	{
 		return klp_enable_patch(NULL);
 	}
-	static void hotreload_exit(void)
+	static void deku_exit(void)
 	{
 	}
-	module_init(hotreload_init);
-	module_exit(hotreload_exit);
+	module_init(deku_init);
+	module_exit(deku_exit);
 	MODULE_INFO(livepatch, "Y");
 	MODULE_LICENSE("GPL");
 	EOF
@@ -152,7 +152,7 @@ main()
 	[ "$(git --version)" ] || { logErr "\"git\" could not be found. Please install \"git\""; exit 2; }
 	[ "$(ctags --version)" ] || { logErr "\"ctags\" could not be found. Please install \"exuberant-ctags\""; exit 1; }
 
-	echo "Initialize kernel hot reload"
+	echo "Initialize DEKU"
 	echo "Sources dir: $sourcesdir"
 	echo "Build dir: $builddir"
 	echo "Work dir: $workdir"

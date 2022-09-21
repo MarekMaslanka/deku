@@ -1,23 +1,23 @@
 #!/bin/bash
 # Author: Marek Maślanka
-# Project: KernelHotReload
-# URL: https://github.com/MarekMaslanka/KernelHotReload
-# 
-# Main file for KernelHotReload
+# Project: DEKU
+# URL: https://github.com/MarekMaslanka/deku
+#
+# Main file for DEKU
 
 . ./header.sh
 . ./common.sh
 
 showHelp()
 {
-	echo "KernelHotReload is a tool that allow quick apply changes to the running kernel on the device.
-The changes provided by KernelHotReload lives in the kernel util next reboot.
+	echo "DEKU is a tool that allow quick apply changes to the running kernel on the device.
+The changes provided by DEKU lives in the kernel util next reboot.
 
 Usage:
-    kernel_hot_reload.sh [OPTIONS...] COMMAND
+    deku [OPTIONS...] COMMAND
 Commands list:
-    init   - initialize KernelHotReload. Create a workdir directory where the configuration file, current state of the kernel source code and kernel image version on the device are stored,
-    build  - build KernelHotReload modules which are livepatch kernel's modules,
+    init   - initialize the DEKU. Create a workdir directory where the configuration file, current state of the kernel source code and kernel image version on the device are stored,
+    build  - build the DEKU modules which are livepatch kernel's modules,
     sync   - synchronize current state of source code and kernel image. It must be used when the kernel was build by user and flashed to the device,
     deploy - build and deploy the changes to the device.
 
@@ -32,10 +32,10 @@ Commands list:
        The given user must be able to load and unload kernel modules. The SSH must be configured to use key-based authentication.
 
 	Example usage:
-		./kernel_hot_reload.sh -b /home/user/linux_build -d ssh -p root@192.168.0.100:2233 init
+		./deku -b /home/user/linux_build -d ssh -p root@192.168.0.100:2233 init
 
 	Example usage when custom key-based authentication key is used for ssh connection:
-		./kernel_hot_reload.sh -b /home/user/linux_build -d ssh -p \"root@192.168.0.100 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/key_rsa\" init
+		./deku -b /home/user/linux_build -d ssh -p \"root@192.168.0.100 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/key_rsa\" init
 	"
 }
 

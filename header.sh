@@ -1,6 +1,6 @@
 # Author: Marek Maślanka
-# Project: KernelHotReload
-# URL: https://github.com/MarekMaslanka/KernelHotReload
+# Project: DEKU
+# URL: https://github.com/MarekMaslanka/deku
 
 # default name for workdir
 export DEFAULT_WORKDIR=workdir
@@ -23,14 +23,14 @@ export SYMBOLS_DIR="$workdir/symbols"
 # configuration file
 export CONFIG_FILE="$workdir/config"
 
-# template for hotreload module suffix
+# template for DEKU module suffix
 export MODULE_SUFFIX_FILE=module_suffix_tmpl.c
 
-# hot reload script
-export HOTRELOAD_SCRIPT=khr_reload.sh
+# DEKU script to reload modules
+export DEKU_RELOAD_SCRIPT=deku_reload.sh
 
-# prefix for functions that manages hotreload
-export KHR_FUN_PREFIX="__khr_fun_"
+# prefix for functions that manages DEKU
+export DEKU_FUN_PREFIX="__deku_fun_"
 
 # file where kernel version is stored
 export KERNEL_VERSION_FILE="$workdir/version"

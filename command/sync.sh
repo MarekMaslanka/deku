@@ -1,7 +1,7 @@
 #!/bin/bash
 # Author: Marek Maślanka
-# Project: KernelHotReload
-# URL: https://github.com/MarekMaslanka/KernelHotReload
+# Project: DEKU
+# URL: https://github.com/MarekMaslanka/deku
 
 regenerateSymbols()
 {
@@ -16,7 +16,7 @@ regenerateSymbols()
 main()
 {
 	logInfo "Synchronize..."
-	rm -rf "$workdir"/khr_*
+	rm -rf "$workdir"/deku_*
 	getKernelVersion > "$KERNEL_VERSION_FILE"
 	regenerateSymbols
 	git --work-tree="$SOURCE_DIR" --git-dir="$workdir/.git" add "$SOURCE_DIR/*"

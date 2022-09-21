@@ -1,7 +1,7 @@
 #!/bin/bash
 # Author: Marek Maślanka
-# Project: KernelHotReload
-# URL: https://github.com/MarekMaslanka/KernelHotReload
+# Project: DEKU
+# URL: https://github.com/MarekMaslanka/deku
 
 validateKernels()
 {
@@ -52,7 +52,7 @@ main()
 		[[ "$moduledir" == "" ]] && break
 		local module=`basename $moduledir`
 		[[ ! "${modulesontarget[*]}" =~ "${module}" ]] && modulestoupload+="$moduledir/$module.ko "
-	done <<< "`find $workdir -type d -name khr_*`"
+	done <<< "`find $workdir -type d -name deku_*`"
 
 	if ((${#modulestoupload[@]} == 0)) && ((${#modulestounload[@]} == 0)); then
 		echo "No modules need to upload"

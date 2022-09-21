@@ -1,7 +1,7 @@
 #!/bin/bash
 # Author: Marek Maślanka
-# Project: KernelHotReload
-# URL: https://github.com/MarekMaslanka/KernelHotReload
+# Project: DEKU
+# URL: https://github.com/MarekMaslanka/deku
 #
 # Generate livepatch module by compare elf files and extract changed functions
 
@@ -10,8 +10,8 @@ RUN_POST_BUILD=0
 generateModuleId()
 {
 	local file=$1
-	local khr_module_id=`git -C "$workdir" diff -W -- $file | cksum | cut -d' ' -f1`
-	printf "0x%08x" $khr_module_id
+	local deku_module_id=`git -C "$workdir" diff -W -- $file | cksum | cut -d' ' -f1`
+	printf "0x%08x" $deku_module_id
 }
 
 generateMakefile()
@@ -190,7 +190,7 @@ generateDiffObject()
 	do
 		[[ "$fun" == "" ]] && continue
 		# if modified function is inlined in origin file then get functions that call
-		# this function and make hot reload for those functions
+		# this function and make DEKU module for those functions
 		if ! grep -q "\b$fun\b" <<< "$originfuncs"; then
 			logDebug "$fun function in $file is inlined"
 			sed -i "/\b$fun\b/d" "$moduledir/$MOD_SYMBOLS_FILE"
@@ -256,11 +256,11 @@ generateLivepatchSource()
 		# fill list of a klp_func struct
 		klpfunc="$klpfunc		{
 			.old_name = \"${symbol}\",
-			.new_func = $KHR_FUN_PREFIX${plainsymbol},
+			.new_func = $DEKU_FUN_PREFIX${plainsymbol},
 		},"
 
 		prototypes="$prototypes
-			void $KHR_FUN_PREFIX$plainsymbol(void);"
+			void $DEKU_FUN_PREFIX$plainsymbol(void);"
 	done < $modsymfile
 
 	local klpobjname
@@ -283,20 +283,20 @@ generateLivepatchSource()
 	cat >> $outfile <<- EOM
 	$prototypes
 
-	static struct klp_func khr_funcs[] = {
+	static struct klp_func deku_funcs[] = {
 	$klpfunc { }
 	};
 
-	static struct klp_object khr_objs[] = {
+	static struct klp_object deku_objs[] = {
 		{
 			.name = $klpobjname,
-			.funcs = khr_funcs,
+			.funcs = deku_funcs,
 		}, { }
 	};
 
-	static struct klp_patch khr_patch = {
+	static struct klp_patch deku_patch = {
 		.mod = THIS_MODULE,
-		.objs = khr_objs,
+		.objs = deku_objs,
 	};
 	EOM
 	cat $MODULE_SUFFIX_FILE >> $outfile
@@ -394,12 +394,12 @@ main()
 		generateLivepatchMakefile "$moduledir/Makefile" "$file" "$module"
 		buildLivepatchModule "$moduledir"
 
-		# restore calls to origin func XYZ instead of __khr_XYZ
+		# restore calls to origin func XYZ instead of __deku_XYZ
 		while read -r symbol; do
 			local plainsymbol="${symbol//./_}"
-			./elfutils --changeCallSymbol -s ${KHR_FUN_PREFIX}${plainsymbol} -d ${plainsymbol} \
+			./elfutils --changeCallSymbol -s ${DEKU_FUN_PREFIX}${plainsymbol} -d ${plainsymbol} \
 					   "$moduledir/$module.ko" || ext 1
-			objcopy --strip-symbol=${KHR_FUN_PREFIX}${plainsymbol} "$moduledir/$module.ko"
+			objcopy --strip-symbol=${DEKU_FUN_PREFIX}${plainsymbol} "$moduledir/$module.ko"
 		done < "$moduledir/$MOD_SYMBOLS_FILE"
 
 		echo -n "$moduleid" > "$moduledir/id"
@@ -409,8 +409,8 @@ main()
 		echo -n "$module " > "$notefile"
 		cat "$moduledir/id" >> "$notefile"
 		echo "" >> "$notefile"
-		objcopy --add-section .note.khr="$notefile" \
-				--set-section-flags .note.khr=alloc,readonly \
+		objcopy --add-section .note.deku="$notefile" \
+				--set-section-flags .note.deku=alloc,readonly \
 				"$moduledir/$module.ko"
 
 	done
