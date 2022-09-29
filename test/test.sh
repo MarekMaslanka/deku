@@ -1,23 +1,26 @@
 #!/bin/bash
 # Author: Marek Maślanka
-# Project: KernelHotReload
+# Project: DEKU
+# URL: https://github.com/MarekMaslanka/deku
 
+# Functions return "0" as success
+
+WORKDIR="workdir_test"
+export workdir="$WORKDIR"
 . ./header.sh
 
 QEMU_SSH_PORT="60022"
-SSHPARAMS="root@localhost -p $QEMU_SSH_PORT"
-DEPLOY_PARAMS="root@localhost:$QEMU_SSH_PORT"
+SSHPARAMS="root@localhost -p $QEMU_SSH_PORT -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i test/testing_rsa"
+DEPLOY_PARAMS="root@localhost:$QEMU_SSH_PORT -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i test/testing_rsa"
 REMOTE_OUT=""
 
-LINUX_KERNEL_DIR="$HOME/qemu/linux"
+TEST_CACHE_DIR="$HOME/.cache/deku"
+ROOTFS_IMG=test/rootfs.img
 
-SOURCE_DIR="$LINUX_KERNEL_DIR/linux"
-BUILD_DIR="$LINUX_KERNEL_DIR/build-linux-5.15.10/"
-workdir="workdir"
+SOURCE_DIR="$TEST_CACHE_DIR/linux"
+BUILD_DIR="$TEST_CACHE_DIR/build-linux-deku"
 MAIN_PATH=""
 KERNEL_VERSION="v5.15"
-
-QEMU_PID=0
 
 appendToFunctionAt()
 {
@@ -45,7 +48,7 @@ modifyFunctions()
 	[[ "$pass" == "-2" ]] && index=$((count/2))
 	local funX=${functions[index]}
 	local arr=($funX)
-	appendToFunctionAt $file ${arr[2]} 'pr_err("KernelHotReload");'
+	appendToFunctionAt $file ${arr[2]} 'pr_err("DEKU");'
 }
 
 appendToFunction()
@@ -62,10 +65,17 @@ appendToFunction()
 runQemu()
 {
 	local KERNEL_IMAGE="$BUILD_DIR/arch/x86/boot/bzImage"
-	local ROOTFS="$HOME/qemu/buildroot-2021.02.2/output/images/rootfs.cpio"
-	(($QEMU_PID != 0)) && kill -9 $QEMU_PID
-	qemu-system-x86_64 -kernel "$KERNEL_IMAGE" -initrd "$ROOTFS" -s -append nokaslr -nic "user,hostfwd=tcp::$QEMU_SSH_PORT-:22" &
-	QEMU_PID=$!
+	local cmdline="console=ttyS0 root=/dev/sda rw"
+	killall -q -9 qemu-system-x86_64
+	sleep 1 # to avoid error: Could not set up host forwarding rule 'tcp::60022-:22'
+	qemu-system-x86_64 -kernel "$KERNEL_IMAGE" -drive "format=raw,file=$ROOTFS_IMG" -append "'$cmdline'" \
+					   -s -nic "user,hostfwd=tcp::$QEMU_SSH_PORT-:22" -daemonize
+	for i in {1..150}; do
+		ssh $SSHPARAMS -o ConnectTimeout=1 -q exit
+		[[ $? == 0 ]] && break
+		[ $(expr $i % 10) == 0 ] && echo "Waiting for qemu..."
+		sleep 1
+	done
 }
 
 remoteSh()
@@ -76,81 +86,108 @@ remoteSh()
 
 prepareKernelSources()
 {
-	git clone git://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git "$SOURCE_DIR"
+	git clone git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git "$SOURCE_DIR"
 	mkdir -p "$BUILD_DIR"
 }
 
 workdirContainsOnly()
 {
 	local notcontains=()
-	local modules=`find $workdir -type d -name khr_*`
+	local modules=`find "$WORKDIR" -type d -name deku_*`
 	for i in "$@"; do
-		[ ! -f "$workdir/$i/$i.ko" ] && notcontains+="$i "
-		modules=`sed "/^$workdir\/$i\$/d" <<< "$modules"`
+		[ ! -f "$WORKDIR/$i/$i.ko" ] && notcontains+="$i "
+		modules=`sed "/^$WORKDIR\/$i\$/d" <<< "$modules"`
 	done
 	[[ $modules != "" ]] && >&2 echo -e "${RED}Workdir contains unexpected modules:$modules${NC}"
 	((${#notcontains[@]} > 0)) && >&2 echo -e "${RED}Workdir does not contains expected modules:${notcontains[@]}${NC}"
-	[[ "$modules" != "" ]] || ((${#notcontains[@]} > 0)) && return 0
+	[[ "$modules" != "" ]] || ((${#notcontains[@]} > 0)) && return 1
 	echo "Workdir contains only modules '$@'... OK"
-	return 1
+	return 0
 }
 
 checkIfWorkdirIsEmpty()
 {
-	local workdirmodules=`find $workdir -type d -name khr_*`
-	[[ "$workdirmodules" != "" ]] && { >&2 echo -e "${RED}Workdir must not contain any modules. Modules in workdir: $workdirmodules${NC}"; return 0; }
+	local workdirmodules=`find "$WORKDIR" -type d -name deku_*`
+	[[ "$workdirmodules" != "" ]] && { >&2 echo -e "${RED}Workdir must not contain any modules. Modules in workdir: $workdirmodules${NC}"; return 1; }
 	echo "Workdir is empty... OK"
-	return 1
+	return 0
 }
 
 checkIfDmesgContains()
 {
-	local res=1
-	remoteSh cat /var/log/messages
+	local res=0
+	remoteSh dmesg
 	for i in "$@"; do
 		if ! grep -q "$i" <<< "$REMOTE_OUT"; then
 			>&2 echo -e "${RED}dmesg on remote does not contains:$i${NC}"
 			echo "========================================================"
 			echo "$REMOTE_OUT"
 			echo "========================================================"
-			res=0
+			res=1
 		fi
 	done
-	((res == 1)) && echo "dmesg contains: '$@'... OK"
+	((res == 0)) && echo "dmesg contains: '$@'... OK"
 	return $res
 }
 
 checkIfDmesgNOTContains()
 {
-	local res=1
-	remoteSh cat /var/log/messages
+	local res=0
+	remoteSh cat /var/log/syslog
 	for i in "$@"; do
 		if grep -q "$i" <<< "$REMOTE_OUT"; then
 			>&2 echo -e "${RED}dmesg on remote contains unexpected:$i${NC}"
 			echo "========================================================"
 			echo "$REMOTE_OUT"
 			echo "========================================================"
-			res=0
+			res=1
 		fi
 	done
-	((res == 1)) && echo "dmesg not contains: '$@'... OK"
+	((res == 0)) && echo "dmesg not contains: '$@'... OK"
 	return $res
 }
 
 checkIfFileExists()
 {
 	local file=$1
-	[[ ! -f "$file" ]] && { >&2 echo -e "${RED}File '$file' does not exists${NC}"; return 0; }
+	[[ ! -f "$file" ]] && { >&2 echo -e "${RED}File '$file' does not exists${NC}"; return 1; }
 	echo "Found '$file'... OK"
-	return 1
+	return 0
 }
 
 buildKernel()
 {
-	make -C "$SOURCE_DIR" O="$BUILD_DIR" -j4
+	rm -f "$BUILD_DIR/vmlinux"
+	yes "" | make -C "$SOURCE_DIR" O="$BUILD_DIR" oldconfig
+	make -C "$SOURCE_DIR" O="$BUILD_DIR" -j`nproc`
 }
 
+enableKernelConfig()
+{
+	local flag=$1
+	local action="--enable"
+	[[ $2 != "" ]] && action=$2
+	"$SOURCE_DIR"/scripts/config --file "$BUILD_DIR"/.config $action $flag
+}
+
+# TODO: Support "allyesconfig" as in "prepareKernelOld"
 prepareKernel()
+{
+	local version=$1
+	git -C "$SOURCE_DIR" reset --hard
+	git -C "$SOURCE_DIR" clean -d -f
+	git -C "$SOURCE_DIR" checkout $version
+
+	make -C "$SOURCE_DIR" O="$BUILD_DIR" defconfig
+	sed -i s/=m/=y/g "$BUILD_DIR/.config"
+	enableKernelConfig KALLSYMS_ALL
+	enableKernelConfig FUNCTION_TRACER
+	enableKernelConfig LIVEPATCH
+
+	buildKernel
+}
+
+prepareKernelOld()
 {
 	local version=$1
 	local allyesconfig=$2
@@ -181,82 +218,82 @@ integrationTest()
 
 	runQemu
 
-	rm -rf $workdir
-	./kernel_hot_reload.sh -b "$BUILD_DIR" -d ssh -p "$DEPLOY_PARAMS" init
+	rm -rf "$WORKDIR"
+	./deku -w "$WORKDIR" -b "$BUILD_DIR" -d ssh -p "$DEPLOY_PARAMS" init
 
 	# check if no module is build
-	./kernel_hot_reload.sh deploy
-	checkIfWorkdirIsEmpty && return 1
+	./deku -w "$WORKDIR" deploy
+	checkIfWorkdirIsEmpty || return 1
 
 	# check simple modification
 	appendToFunction "$SOURCE_DIR/net/ipv4/tcp_ipv4.c" tcp_v4_connect "$text"
 
-	remoteSh rm -f /var/log/messages
-	./kernel_hot_reload.sh deploy
-	workdirContainsOnly khr_47910166_tcp_ipv4 && return 2
+	remoteSh "echo > /var/log/syslog"
+	./deku -w "$WORKDIR" deploy
+	workdirContainsOnly deku_47910166_tcp_ipv4 || return 2
 	sleep 1
-	remoteSh wget www.google.com 2>/dev/null
-	sleep 5
-	checkIfDmesgContains "tcp_v4_connect test" && return 3
+	remoteSh wget www.google.com -O /dev/null 2>/dev/null
+	sleep 1
+	checkIfDmesgContains "tcp_v4_connect test" || return 3
 
 	echo -e "${GREEN}------------------------- INTEGRATION TEST 1 DONE -------------------------${NC}"
 
 	# check whether the same changes in source code generates the same module id and prevents to upload
-	rm -rf $workdir/khr_47910166_tcp_ipv4
-	remoteSh rm -f /var/log/messages
-	./kernel_hot_reload.sh deploy
+	rm -rf "$WORKDIR/deku_47910166_tcp_ipv4"
+	remoteSh "echo > /var/log/syslog"
+	./deku -w "$WORKDIR" deploy
 	sleep 1
-	checkIfDmesgNOTContains "livepatch: disabling patch 'khr_5812c448_hid_core'" && return 4
+	checkIfDmesgNOTContains "livepatch: enabling patch 'deku_47910166_tcp_ipv4'" || return 4
 
 	echo -e "${GREEN}------------------------- INTEGRATION TEST 2 DONE -------------------------${NC}"
 
 	# check scenario when user build kernel and sync is performed
-	make -C "$SOURCE_DIR" O="$BUILD_DIR" -j4
+	buildKernel
 	runQemu
 
-	./kernel_hot_reload.sh sync
-	checkIfWorkdirIsEmpty && return 5
-	remoteSh rm -f /var/log/messages
-	./kernel_hot_reload.sh deploy
-	checkIfWorkdirIsEmpty && return 6
-	remoteSh wget www.google.com 2>/dev/null
+	./deku -w "$WORKDIR" sync
+	checkIfWorkdirIsEmpty || return 5
+	remoteSh "echo > /var/log/syslog"
+	./deku -w "$WORKDIR" deploy
+	checkIfWorkdirIsEmpty || return 6
+	remoteSh wget www.google.com -O /dev/null 2>/dev/null
 	sleep 5
-	checkIfDmesgContains "tcp_v4_connect test" && return 7
+	checkIfDmesgContains "tcp_v4_connect test" || return 7
 
 	echo -e "${GREEN}------------------------- INTEGRATION TEST 3 DONE-------------------------${NC}"
 
 	# check scenario when modify detection works after sync
 	appendToFunction "$SOURCE_DIR/net/ipv4/tcp_ipv4.c" tcp_v4_connect "$text2"
 
-	remoteSh rm -f /var/log/messages
-	./kernel_hot_reload.sh deploy
-	workdirContainsOnly khr_47910166_tcp_ipv4 && return 8
-	checkIfDmesgContains "livepatch: disabling patch 'khr_5812c448_hid_core'" && return 9
-	remoteSh wget www.google.com 2>/dev/null
+	remoteSh "echo > /var/log/syslog"
+	./deku -w "$WORKDIR" deploy
+	workdirContainsOnly deku_47910166_tcp_ipv4 || return 8
+	checkIfDmesgContains "livepatch: enabling patch 'deku_47910166_tcp_ipv4'" || return 9
+	remoteSh wget www.google.com -O /dev/null 2>/dev/null
 	sleep 5
-	checkIfDmesgContains "tcp_v4_connect test2" && return 10
+	checkIfDmesgContains "tcp_v4_connect test2" || return 10
 
 	echo -e "${GREEN}------------------------- INTEGRATION TEST 4 DONE -------------------------${NC}"
 
 	# check scenario where module must be unloaded due to undo all modifications
 	git -C "$SOURCE_DIR" reset --hard
-	make -C "$SOURCE_DIR" O="$BUILD_DIR" -j4
+	buildKernel
 	runQemu
-	./kernel_hot_reload.sh sync
+	./deku -w "$WORKDIR" sync
 	sleep 15
 	appendToFunction "$SOURCE_DIR/net/ipv4/tcp_ipv4.c" tcp_v4_connect "$text"
-	./kernel_hot_reload.sh deploy
-	remoteSh rm -f /var/log/messages
+	./deku -w "$WORKDIR" deploy
+	remoteSh "echo > /var/log/syslog"
 	sleep 5
-	remoteSh wget www.google.com 2>/dev/null
+	remoteSh wget www.google.com -O /dev/null 2>/dev/null
 	sleep 15
-	checkIfDmesgContains "tcp_v4_connect test" && return 11
+	checkIfDmesgContains "tcp_v4_connect test" || return 11
 	git -C "$SOURCE_DIR" reset --hard
-	yes "y" | ./kernel_hot_reload.sh deploy
-	remoteSh rm -f /var/log/messages
-	remoteSh wget www.google.com 2>/dev/null
+	yes "y" | ./deku -w "$WORKDIR" deploy
+	remoteSh "echo > /var/log/syslog"
+	remoteSh wget www.google.com -O /dev/null 2>/dev/null
 	sleep 5
-	checkIfDmesgNOTContains "tcp_v4_connect test" && return 12
+	checkIfDmesgNOTContains "tcp_v4_connect test" || return 12
 
 	echo -e "${GREEN}------------------------- INTEGRATION TEST 5 DONE -------------------------${NC}"
 
@@ -278,26 +315,26 @@ compareFileContents()
 		echo -e "${got}"
 		echo "=============================================="
 		echo ""
-		return 0
+		return 1
 	fi
 	echo "Contents of file $file is... OK"
-	return 1
+	return 0
 }
 
 # modify inline function and check if it is properly detected
 inlineTest()
 {
-	prepareKernel v5.0
+	prepareKernel v5.4.200
 
-	rm -rf $workdir
-	./kernel_hot_reload.sh -b "$BUILD_DIR" -d ssh -p "$DEPLOY_PARAMS" init
+	rm -rf "$WORKDIR"
+	./deku -w "$WORKDIR" -b "$BUILD_DIR" -d ssh -p "$DEPLOY_PARAMS" init
 
-	appendToFunction "$SOURCE_DIR/drivers/gpu/drm/i915/intel_dvo.c" intel_attached_dvo ";"
-	./kernel_hot_reload.sh build
-	local expected='vmlinux.intel_dvo_connector_get_hw_state
-vmlinux.intel_dvo_mode_valid
-vmlinux.intel_dvo_detect'
-	compareFileContents "$workdir/khr_e502f7e8_intel_dvo/khr_e502f7e8_intel_dvo.sym" "$expected" && return 1
+	appendToFunction "$SOURCE_DIR/drivers/gpu/drm/i915/display/intel_dvo.c" intel_attached_dvo "pr_info(\"\");"
+	./deku -w "$WORKDIR" build || return 1
+	local expected='intel_dvo_mode_valid
+intel_dvo_connector_get_hw_state
+intel_dvo_detect'
+	compareFileContents "$WORKDIR/deku_dc0fef60_intel_dvo/$MOD_SYMBOLS_FILE" "$expected" || return 2
 	echo -e "${GREEN}------------------------- INLINE TEST DONE -------------------------${NC}"
 	return 0
 }
@@ -305,35 +342,40 @@ vmlinux.intel_dvo_detect'
 # modify inline function and check if it is properly detected
 inline2Test()
 {
-	prepareKernel v5.0
+	prepareKernel v5.4.200
 
-	rm -rf $workdir
-	./kernel_hot_reload.sh -b "$BUILD_DIR" -d ssh -p "$DEPLOY_PARAMS" init
+	rm -rf "$WORKDIR"
+	./deku -w "$WORKDIR" -b "$BUILD_DIR" -d ssh -p "$DEPLOY_PARAMS" init
 
-	appendToFunction "$SOURCE_DIR/drivers/input/evdev.c" evdev_get_mask_cnt ";"
-	appendToFunction "$SOURCE_DIR/drivers/input/evdev.c" __evdev_is_filtered ";"
-	appendToFunction "$SOURCE_DIR/drivers/input/evdev.c" evdev_pass_values ";"
-	./kernel_hot_reload.sh build
-	local expected='vmlinux.evdev_pass_values
-vmlinux.evdev_ioctl_handler'
-	compareFileContents "$workdir/khr_e8db891b_evdev/khr_e8db891b_evdev.sym" "$expected" && return 1
+	appendToFunction "$SOURCE_DIR/drivers/input/evdev.c" evdev_get_mask_cnt "pr_info(\"evdev_get_mask_cnt\");" # evdev_set_mask evdev_get_mask __evdev_is_filtered
+	appendToFunction "$SOURCE_DIR/drivers/input/evdev.c" __evdev_is_filtered "pr_info(\"__evdev_is_filtered\");" # evdev_pass_values
+	appendToFunction "$SOURCE_DIR/drivers/input/evdev.c" evdev_pass_values "pr_info(\"evdev_pass_values\");" # evdev_events
+	./deku -w "$WORKDIR" build || return 1
+	local expected='evdev_do_ioctl
+evdev_pass_values
+evdev_events
+evdev_event'
+	compareFileContents "$WORKDIR/deku_e8db891b_evdev/$MOD_SYMBOLS_FILE" "$expected" || return 2
 	echo -e "${GREEN}------------------------- INLINE2 TEST DONE -------------------------${NC}"
 	return 0
 }
 
-# check if khr is build for code that is build as a module 
+# test build-in module
 moduleTest()
 {
-	prepareKernel v5.0
+	prepareKernel v5.4.200
 
-	bash $SOURCE_DIR/scripts/config --file "$BUILD_DIR/.config" --module CONFIG_INET_TUNNEL
-	rm -rf $workdir
-	./kernel_hot_reload.sh -b "$BUILD_DIR" -d ssh -p "$DEPLOY_PARAMS" init
+	enableKernelConfig NF_LOG_ARP "--module"
+	buildKernel
+	rm -rf "$WORKDIR"
+	./deku -w "$WORKDIR" -b "$BUILD_DIR" -d ssh -p "$DEPLOY_PARAMS" init
 
-	appendToFunction "$SOURCE_DIR/net/ipv4/tunnel4.c" xfrm4_tunnel_register ";"
-	./kernel_hot_reload.sh build
-	local expected='tunnel4.xfrm4_tunnel_register'
-	compareFileContents "$workdir/khr_47910166_tcp_ipv4/khr_47910166_tcp_ipv4.sym" "$expected" && return 1
+	appendToFunction "$SOURCE_DIR/net/ipv4/netfilter/nf_log_arp.c" nf_log_arp_packet "pr_info(\"\");"
+	./deku -w "$WORKDIR" build || return 1
+	local expected='nf_log_arp_packet'
+	compareFileContents "$WORKDIR/deku_29b5b22d_nf_log_arp/$MOD_SYMBOLS_FILE" "$expected" || return 2
+	expected='nf_log_arp'
+	compareFileContents "$WORKDIR/deku_29b5b22d_nf_log_arp/$FILE_OBJECT" "$expected" || return 3
 	echo -e "${GREEN}------------------------- MODULE TEST DONE -------------------------${NC}"
 	return 0
 }
@@ -341,18 +383,18 @@ moduleTest()
 # check if symbols are properly generated
 symbolsTest()
 {
-	prepareKernel v5.0
+	prepareKernel v5.15
 
-	rm -rf $workdir
-	./kernel_hot_reload.sh -b "$BUILD_DIR" -d ssh -p "$DEPLOY_PARAMS" init
+	enableKernelConfig X86_PKG_TEMP_THERMAL "--module"
+	buildKernel
+	rm -rf "$WORKDIR"
+	./deku -w "$WORKDIR" -b "$BUILD_DIR" -d ssh -p "$DEPLOY_PARAMS" init
 
-	appendToFunction "$SOURCE_DIR/drivers/thermal/intel/x86_pkg_temp_thermal.c" pkg_thermal_cpu_offline ";"
-	./kernel_hot_reload.sh build
-	checkIfFileExists "$SYMBOLS_DIR/vmlinux" && return 1
-	checkIfFileExists "$SYMBOLS_DIR/drivers/thermal/intel/x86_pkg_temp_thermal" && return 1
-	./kernel_hot_reload.sh sync
-	checkIfFileExists "$SYMBOLS_DIR/vmlinux" && return 1
-	checkIfFileExists "$SYMBOLS_DIR/drivers/thermal/intel/x86_pkg_temp_thermal" && return 1
+	appendToFunction "$SOURCE_DIR/drivers/thermal/intel/x86_pkg_temp_thermal.c" pkg_thermal_cpu_offline "pr_info(\"x86_pkg_temp_thermal\");"
+	./deku -w "$WORKDIR" build || return 1
+	checkIfFileExists "$SYMBOLS_DIR/drivers/thermal/intel/x86_pkg_temp_thermal" || return 2
+	./deku -w "$WORKDIR" sync
+	checkIfFileExists "$SYMBOLS_DIR/drivers/thermal/intel/x86_pkg_temp_thermal" || return 3
 	echo -e "${GREEN}------------------------- SYMBOLS TEST DONE -------------------------${NC}"
 	return 0
 }
@@ -360,20 +402,22 @@ symbolsTest()
 # check if driver that is complex - multi-file/dir - is build properly
 complexTest()
 {
-	prepareKernel v5.0
+	prepareKernel "v5.4.200"
 
-	rm -rf $workdir
-	cd "$SOURCE_DIR"
-	./scripts/config --file "$BUILD_DIR"/.config --enable CONFIG_IWLWIFI
-	yes "" | make O="$BUILD_DIR" oldconfig
-	cd $OLDPWD
-	make -C "$SOURCE_DIR" mrproper
+	rm -rf "$WORKDIR"
+	enableKernelConfig CONFIG_IWLWIFI
 	buildKernel
 
-	./kernel_hot_reload.sh -b "$BUILD_DIR" -d ssh -p "$DEPLOY_PARAMS" init
-	appendToFunction "$SOURCE_DIR/drivers/net/wireless/intel/iwlwifi/pcie/trans.c" iwl_trans_pcie_grab_nic_access ";"
-	./kernel_hot_reload.sh build
-	checkIfFileExists "workdir/khr_72aff690_trans/khr_72aff690_trans.ko" && return 1
+	./deku -w "$WORKDIR" -b "$BUILD_DIR" -d ssh -p "$DEPLOY_PARAMS" init
+	appendToFunction "$SOURCE_DIR/drivers/net/wireless/intel/iwlwifi/pcie/trans.c" iwl_trans_pcie_grab_nic_access "pr_info(\"iwl_trans_pcie_grab_nic_access\");"
+	./deku -w "$WORKDIR" build || return 1
+	checkIfFileExists "$WORKDIR/deku_72aff690_trans/deku_72aff690_trans.ko" || return 2
+
+	appendToFunction "$SOURCE_DIR/drivers/acpi/acpica/evxfgpe.c" acpi_update_all_gpes "pr_info(\"\");"
+	./deku -w "$WORKDIR" build || return 3
+	checkIfFileExists "$WORKDIR/deku_3890c8df_evxfgpe/deku_3890c8df_evxfgpe.ko" || return 4
+
+	echo -e "${GREEN}------------------------- COMPLEX TEST DONE -------------------------${NC}"
 	return 0
 }
 
@@ -384,8 +428,8 @@ buildTest()
 
 	prepareKernel v5.0 1
 
-	rm -rf $workdir
-	./kernel_hot_reload.sh -b "$BUILD_DIR" -d ssh -p "$DEPLOY_PARAMS" init
+	rm -rf "$WORKDIR"
+	./deku -w "$WORKDIR" -b "$BUILD_DIR" -d ssh -p "$DEPLOY_PARAMS" init
 
 	local out=`find $dir -maxdepth 30 -type f -name "*.c"`
 	while read -r file; do
@@ -489,7 +533,7 @@ buildTest()
 		modifyFunctions "$file" -1
 	done <<< "$out"
 
-	./kernel_hot_reload.sh build
+	./deku -w "$WORKDIR" build
 	[ $? -ne 0 ] && return 1
 
 	return 0
@@ -503,35 +547,47 @@ main()
 	MAIN_PATH=`dirname "$0"`
 
 	local res=0
-	if [[ $res == 0 && "$1" == "complex" || "$1" == "all" ]]; then
+	local testname="$1"
+	if [[ $res == 0 ]] && [[ "$1" == "complex" || "$1" == "all" ]]; then
+		testname="Complex"
 		[ ! -d "$SOURCE_DIR" ] && prepareKernelSources
 		complexTest
 		res=$?
 	fi
-	if [[ $res == 0 && "$1" == "inline" || "$1" == "all" ]]; then
+	if [[ $res == 0 ]] && [[ "$1" == "inline" || "$1" == "all" ]]; then
+		testname="Inline"
 		[ ! -d "$SOURCE_DIR" ] && prepareKernelSources
 		inlineTest
 		res=$?
-		[[ $res == 0 ]] && { inline2Test; res=$?; }
+		[[ $res == 0 ]] && { testname="Inline 2"; inline2Test; res=$?; }
 	fi
-	if [[ $res == 0 && "$1" == "symbols" || "$1" == "all" ]]; then
+	if [[ $res == 0 ]] && [[ "$1" == "symbols" || "$1" == "all" ]]; then
+		testname="Symbols"
 		[ ! -d "$SOURCE_DIR" ] && prepareKernelSources
 		symbolsTest
 		res=$?
 	fi
-	if [[ $res == 0 && "$1" == "module" || "$1" == "all" ]]; then
+	if [[ $res == 0 ]] && [[ "$1" == "module" || "$1" == "all" ]]; then
+		testname="Module"
 		[ ! -d "$SOURCE_DIR" ] && prepareKernelSources
 		moduleTest
 		res=$?
 	fi
-	if [[ $res == 0 && "$1" == "integration" || "$1" == "all" ]]; then
+	if [[ $res == 0 ]] && [[ "$1" == "integration" || "$1" == "all" ]]; then
+		if [[ ! -f "$ROOTFS_IMG" ]]; then
+			echo "Rootfs image is not found. Go to 'test' directory and run 'sudo ./mkrootfs.sh' to generate image."
+			exit 1
+		fi
+
+		testname="Integration"
 		[ ! -d "$SOURCE_DIR" ] && prepareKernelSources
 		killall -q -9 qemu-system-x86_64
 		integrationTest
 		res=$?
 		[[ $res != 0 ]] && >&2 echo -e "${RED}INTEGRATION TEST FAILED WITH ERROR CODE: $res${NC}"
 	fi
-	if [[ $res == 0 && "$1" == "dir" || "$1" == "all" ]]; then
+	if [[ $res == 0 && "$1" == "dir" ]]; then
+		testname="Multi changes"
 		[ ! -d "$SOURCE_DIR" ] && prepareKernelSources
 		buildTest "$SOURCE_DIR/"
 		res=$?
@@ -540,8 +596,8 @@ main()
 		>&2 echo -e "${RED}!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!${NC}"
 		>&2 echo -e "${RED}!!!!!!!!!!!!!!!!!!!!! ERROR !!!!!!!!!!!!!!!!!!!!!!${NC}"
 		>&2 echo -e "${RED}!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!${NC}"
+		>&2 echo -e "${RED}Test: $testname failed!${NC}"
 	else
-		(($QEMU_PID != 0)) && kill -9 $QEMU_PID
 		echo -e "${GREEN}@@@@@@@@@@@@@@@@@ TESTS COMPLETED SUCCESSFUL @@@@@@@@@@@@@@@@@${NC}"
 	fi
 	exit
