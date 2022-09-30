@@ -5,7 +5,7 @@
 [Prerequisites](#prerequisites)  
 [Init deku](#init)  
 [Usage](#usage)  
-[Constrains](#constrains)  
+[Constraints](#constraints)  
 
 ---
 
@@ -94,7 +94,9 @@ Instead of the `make` command, the `./deku` can be used. E.g.
 ```
 under the hood, the `make` command just calls the `deku` utility with the same parameters
 
-<a name="constrains"></a>
-## Constrains
- - Only function body can be modified.
- - ARM architecture is not supported yet.
+<a name="constraints"></a>
+## Constraints
+ - Only changes in ".c" source file are supported. Changes in header files are not supported yet.
+ - ARM and other architectures are not supported yet.
+ - Functions marked as "__init" are not supported.
+ - Functions that uses jump labels/static keys are not supported yet.
