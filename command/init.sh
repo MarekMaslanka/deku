@@ -159,7 +159,7 @@ main()
 
 	if [ -d "$workdir" ]
 	then
-		[ "$(ls -A $workdir)" ] && { logErr "Directory \"$workdir\" is not empty"; exit 2; }
+		[ "$(ls -A $workdir)" ] && { logErr "Directory \"$workdir\" is not empty"; exit ENOTEMPTY; }
 	else
 		mkdir -p "$workdir"
 	fi

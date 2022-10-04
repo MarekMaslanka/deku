@@ -85,6 +85,11 @@ main()
 				[[ "$ret" != 0 ]] && exit $ret
 				logInfo "Init done"
 			else
+				if [ ! -d "$workdir" ]; then
+					logInfo "Can't find $workdir directory"
+					logInfo "The project probably has not been initiated"
+					exit ENOTDIR
+				fi
 				bash "$COMMANDS_DIR/$opt.sh"
 				ret=$?
 			fi
