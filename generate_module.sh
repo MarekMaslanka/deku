@@ -177,16 +177,27 @@ generateDiffObject()
 	local file=$2
 	local filename=$(filenameNoExt "$file")
 	local out=`./elfutils --diff -a "$moduledir/_$filename.o" -b "$moduledir/$filename.o"`
-	local modfun=`sed -n "s/^Modified function: \(.\+\)/\1/p" <<< "$out"`
+	local tmpmodfun=`sed -n "s/^Modified function: \(.\+\)/\1/p" <<< "$out"`
 	local newfun=`sed -n "s/^New function: \(.\+\)/\1/p" <<< "$out"`
-	local funcs=`printf "$newfun\n$modfun" | awk NF`
-	echo "$modfun" > "$moduledir/$MOD_SYMBOLS_FILE"
+	local modfun=()
+
+	while read -r fun;
+	do
+		local initfunc=`objdump -t -j ".init.text" "$moduledir/_$filename.o" | grep "\b$fun\b"`
+		if [[ "$initfunc" != "" ]]; then
+			logInfo "Detect modifications in the init '$fun' function. Changes from this function won't be applied."
+			continue
+		fi
+		modfun+=("$fun")
+	done <<< "$tmpmodfun"
+
+	printf "%s\n" "${modfun[@]}" > "$moduledir/$MOD_SYMBOLS_FILE"
 
 	[[ "$out" == "" ]] && return 0;
 
 	local originfuncs=`nm -C -f posix "$BUILD_DIR/${file%.*}.o" | grep -i " t " | cut -d ' ' -f 1`
 	local extractsyms=""
-	while read -r fun;
+	for fun in ${modfun[@]};
 	do
 		[[ "$fun" == "" ]] && continue
 		# if modified function is inlined in origin file then get functions that call
@@ -219,7 +230,7 @@ generateDiffObject()
 		else
 			extractsyms+="-s $fun "
 		fi
-	done <<< "$modfun"
+	done
 
 	while read -r fun;
 	do
