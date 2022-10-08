@@ -104,6 +104,7 @@ main()
 			insmod+="\tsleep 0.2\ndone\n"
 			insmod+="for i in \`seq 1 25\`; do\n"
 			insmod+="\t[ \$(cat $modulesys/transition) = \"0\" ] && break\n"
+			insmod+="\t[ \$? -ne 0 ] && { echo \"Failed to load $modulename\"; exit 1; }\n"
 			insmod+="\techo \"$originname is still loading...\"\n"
 			insmod+="\tsleep 0.2\ndone\n"
 			insmod+="echo \"$originname loaded\"\n"
@@ -117,7 +118,14 @@ main()
 	scp $SCPPARAMS $files $workdir/$DEKU_RELOAD_SCRIPT $host:$dstdir/
 	logInfo "Loading..."
 	remoteSh sh "$dstdir/$DEKU_RELOAD_SCRIPT 2>&1"
-	[ $? == "0" ] && echo -e "${GREEN}Reload done${NC}" || echo -e "${RED}Reload failed!\n$REMOTE_OUT${NC}"
+	if [ $? == 0 ]; then
+		echo -e "${GREEN}Changes applied successfully!${NC}"
+	else
+		logFatal "----------------------------------------"
+		logFatal "$REMOTE_OUT"
+		logFatal "----------------------------------------"
+		logFatal "Apply changes failed!\nCheck system logs on the device to get more informations"
+	fi
 }
 
 main $@
