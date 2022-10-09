@@ -37,7 +37,7 @@ static int ShowDebugLog = 1;
 #define LOG_ERR(fmt, ...) do { fprintf(stderr, "ERROR: " fmt "\n", ##__VA_ARGS__); exit(1); } while(0)
 #define LOG_DEBUG(fmt, ...) do { if (ShowDebugLog) printf(fmt "\n", ##__VA_ARGS__); } while(0)
 
-#define CHECK_ALLOC(m) if (m == NULL) LOG_ERR("Failed to alloc memory in %s (%s:%d)", __FUNCTION__, __FILE__, __LINE__)
+#define CHECK_ALLOC(m) if (m == NULL) LOG_ERR("Failed to alloc memory in %s (%s:%d)", __func__, __FILE__, __LINE__)
 
 typedef struct
 {
@@ -114,26 +114,6 @@ static Elf_Scn *getSectionByName(Elf *elf, const char *secName)
 	return NULL;
 }
 
-/*
-static int getSectionIndexByName(Elf *elf, const char *secName)
-{
-	int idx = 0;
-	Elf_Scn *scn = NULL;
-	GElf_Shdr shdr;
-	size_t shstrndx;
-	elf_getshdrstrndx(elf, &shstrndx);
-	while ((scn = elf_nextscn(elf, scn)) != NULL)
-	{
-		idx++;
-		gelf_getshdr(scn, &shdr);
-		char *name = elf_strptr(elf, shstrndx, shdr.sh_name);
-		if (strcmp(name, secName) == 0)
-			return idx;
-	}
-	return -1;
-}
-*/
-
 static char **getSymbolNames(Elf *elf)
 {
 	char **result;
@@ -153,48 +133,6 @@ static char **getSymbolNames(Elf *elf)
 		result[i] = elf_strptr(elf, shdr.sh_link, sym.st_name);
 	}
 	return result;
-}
-
-static void addVarSymbolToRelocate(Elf *elf, const char *objName)
-{
-	Elf_Scn *scn = getSectionByName(elf, ".symtab");
-	if (scn == NULL)
-		LOG_ERR("Failed to find .symtab section");
-	GElf_Shdr shdr;
-	Elf_Data *data = elf_getdata(scn, NULL);
-	gelf_getshdr(scn, &shdr);
-	size_t cnt = shdr.sh_size / shdr.sh_entsize;
-	for (size_t i = 0; i < cnt; i++)
-	{
-		GElf_Sym sym;
-		gelf_getsym(data, i, &sym);
-		if (ELF64_ST_BIND(sym.st_info) == STB_LOCAL || ELF64_ST_BIND(sym.st_info) == STB_GLOBAL)
-		{
-			char *name = elf_strptr(elf, shdr.sh_link, sym.st_name);
-			char *secName = malloc(strlen(name)+16);
-			sprintf(secName, ".bss.%s", name);
-			if (getSectionByName(elf, secName))
-				goto checkVarName;
-			sprintf(secName, ".data.%s", name);
-			if (getSectionByName(elf, secName))
-				goto checkVarName;
-			sprintf(secName, ".rodata.%s", name);
-			if (getSectionByName(elf, secName))
-				goto checkVarName;
-			continue;
-				checkVarName:
-			if (strcmp("deku_patch", name) && strcmp("deku_objs", name) &&
-				strcmp("deku_funcs", name))
-			{
-				char *klpName = calloc(strlen(name) + strlen(objName) + 16, sizeof(char *));
-				CHECK_ALLOC(klpName);
-				sprintf(klpName, "%s.%s,0", objName, name);
-				addSymbolToRelocate(klpName);
-				LOG_DEBUG("Variable: '%s'", name);
-				free(klpName);
-			}
-		}
-	}
 }
 
 static void addRelocateSymToStrtab(Elf *elf)
@@ -268,48 +206,6 @@ static int convSymToLpRelSym(Elf *elf)
 		gelf_update_sym(data, i, &sym);
 	}
 	return 0;
-}
-
-static void removeFunctionSymbols(Elf *elf)
-{
-	GElf_Shdr shdr;
-	Elf_Scn *scn = getSectionByName(elf, ".symtab");
-	if (scn == NULL)
-		LOG_ERR("Failed to find .symtab section");
-	Elf_Data *data = elf_getdata(scn, NULL);
-	gelf_getshdr(scn, &shdr);
-	size_t cnt = shdr.sh_size / shdr.sh_entsize;
-	for (size_t i = 0; i < cnt; i++)
-	{
-		GElf_Sym sym;
-		gelf_getsym(data, i, &sym);
-		char *name = elf_strptr(elf, shdr.sh_link, sym.st_name);
-		if (sym.st_shndx == STT_FUNC)
-		{
-			if (strlen(name) > 0 &&
-				strcmp("DEKU_MODULE_show", name) &&
-				strcmp("deku_init", name) &&
-				strcmp("deku_exit", name) &&
-				strcmp("cleanup_module", name) &&
-				strcmp("init_module", name))
-			{
-				char **fun = funToReplace;
-				for(; *fun != NULL; fun++)
-				{
-					if (strcmp(name, fun[0]) == 0)
-						break;
-				}
-				if (*fun == NULL)
-				{
-					sym.st_shndx = 0;
-					sym.st_info = STB_WEAK << 4;
-					LOG_DEBUG("Remove symbol '%s'", name);
-				}
-			}
-		}
-		gelf_update_sym(data, i, &sym);
-	}
-	gelf_update_shdr(scn, &shdr);
 }
 
 static RelaSym **removeRelaSymbols(Elf *elf, char **names)
@@ -420,7 +316,7 @@ static void addRelaSection(Elf *elf, RelaSym **relocs, char **names)
 
 static void help(const char *execName)
 {
-	error(EXIT_FAILURE, 0, "usage: %s -s <OBJ.PATCH_FUNCTION> -r <OBJ.RELOCATION_FUNCTION,IDX> [-d] <MODULE.ko>", execName);
+	error(EXIT_FAILURE, 0, "Usage: %s -s <OBJ.PATCH_FUNCTION> -r <OBJ.RELOCATION_FUNCTION,IDX> [-V] <MODULE.ko>", execName);
 }
 
 int main(int argc, char *argv[])
@@ -428,13 +324,12 @@ int main(int argc, char *argv[])
 	char *file = NULL;
 	char *objName = NULL;
 	int opt, funCnt = 0;
-	uint8_t removeFuncAndVars = 0;
 
 	funToReplace = calloc(argc, sizeof(char *));
 	CHECK_ALLOC(funToReplace);
 	symToRelocate = malloc(sizeof(*symToRelocate));
 	CHECK_ALLOC(symToRelocate);
-	while ((opt = getopt(argc, argv, "s:r:dVh")) != -1)
+	while ((opt = getopt(argc, argv, "s:r:Vh")) != -1)
 	{
 		switch (opt)
 		{
@@ -449,9 +344,6 @@ int main(int argc, char *argv[])
 		}
 		case 'r':
 			addSymbolToRelocate(optarg);
-			break;
-		case 'd':
-			removeFuncAndVars = 1;
 			break;
 		case 'V':
 			ShowDebugLog = 0;
@@ -491,11 +383,6 @@ int main(int argc, char *argv[])
 	if (elf_getshdrstrndx(elf, &shstrndx))
 		error(EXIT_FAILURE, errno, "cannot get section header string index");
 
-	if (removeFuncAndVars)
-	{
-		removeFunctionSymbols(elf);
-		addVarSymbolToRelocate(elf, objName);
-	}
 	char **symbolNames = getSymbolNames(elf);
 	RelaSym **relocs = removeRelaSymbols(elf, symbolNames);
 	addRelocateSymToStrtab(elf);

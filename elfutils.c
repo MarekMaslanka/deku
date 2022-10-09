@@ -45,7 +45,7 @@ static bool ShowDebugLog = 1;
 
 #define CHECK_ALLOC(m) \
 	if (m == NULL)     \
-	LOG_ERR("Failed to alloc memory in %s (%s:%d)", __FUNCTION__, __FILE__, __LINE__)
+	LOG_ERR("Failed to alloc memory in %s (%s:%d)", __func__, __FILE__, __LINE__)
 
 #define invalidSym(sym) (sym.st_name == 0 && sym.st_info == 0 && sym.st_shndx == 0)
 
@@ -204,7 +204,7 @@ static GElf_Sym getSymbolByName(Elf *elf, char *name, size_t *symIndex)
 {
 	Elf_Scn *scn = getSectionByName(elf, ".symtab");
 	GElf_Shdr shdr;
-	GElf_Sym sym = {};
+	GElf_Sym sym = {0};
 	Elf_Data *data = elf_getdata(scn, NULL);
 	gelf_getshdr(scn, &shdr);
 	size_t cnt = shdr.sh_size / shdr.sh_entsize;
@@ -245,30 +245,12 @@ static GElf_Sym getSymbolByIndex(Elf *elf, size_t index)
 {
 	Elf_Scn *scn = getSectionByName(elf, ".symtab");
 	GElf_Shdr shdr;
-	GElf_Sym sym = {};
+	GElf_Sym sym = {0};
 	Elf_Data *data = elf_getdata(scn, NULL);
 	gelf_getshdr(scn, &shdr);
 	size_t cnt = shdr.sh_size / shdr.sh_entsize;
 	if (index < cnt)
 		gelf_getsym(data, index, &sym);
-	return sym;
-}
-
-static GElf_Sym getSymbolByOffset(Elf *elf, Elf64_Section shndx, size_t offset)
-{
-	Elf_Scn *scn = getSectionByName(elf, ".symtab");
-	GElf_Shdr shdr;
-	GElf_Sym sym = {};
-	Elf_Data *data = elf_getdata(scn, NULL);
-	gelf_getshdr(scn, &shdr);
-	size_t cnt = shdr.sh_size / shdr.sh_entsize;
-	for (size_t i = 0; i < cnt; i++)
-	{
-		gelf_getsym(data, i, &sym);
-		if (sym.st_name != 0 && sym.st_shndx == shndx && sym.st_value == offset)
-			return sym;
-	}
-	memset(&sym, 0, sizeof(sym));
 	return sym;
 }
 
@@ -315,39 +297,19 @@ static GElf_Sym getLinkedSym(Elf *elf, GElf_Sym *sym)
 {
 	Elf_Scn *scn = getSectionByName(elf, ".symtab");
 	GElf_Shdr shdr;
-	GElf_Sym tsym = {};
+	GElf_Sym tsym = {0};
 	Elf_Data *data = elf_getdata(scn, NULL);
 	gelf_getshdr(scn, &shdr);
 	size_t cnt = shdr.sh_size / shdr.sh_entsize;
 	for (size_t i = 0; i < cnt; i++)
 	{
 		gelf_getsym(data, i, &tsym);
-		if (memcmp(&tsym, sym, sizeof(sym)) != 0 && tsym.st_name != 0 &&
+		if (memcmp(&tsym, sym, sizeof(*sym)) != 0 && tsym.st_name != 0 &&
 				   tsym.st_shndx == sym->st_shndx)
 			return tsym;
 	}
 	memset(&tsym, 0, sizeof(tsym));
 	return tsym;
-}
-
-static GElf_Sym getSymbolForReloc(Elf *elf, Elf64_Section sec, size_t offset)
-{
-	GElf_Rela rela;
-	GElf_Shdr shdr;
-	GElf_Sym invalidSym = {};
-	Elf_Scn *scn = getRelForSectionIndex(elf, sec);
-	if(scn == NULL)
-		return invalidSym;
-	Elf_Data *data = elf_getdata(scn, NULL);
-	gelf_getshdr(scn, &shdr);
-	size_t cnt = shdr.sh_size / shdr.sh_entsize;
-	for (size_t i = 0; i < cnt; i++)
-	{
-		gelf_getrela(data, i, &rela);
-		if (rela.r_offset == offset)
-			return getSymbolByIndex(elf, ELF64_R_SYM(rela.r_info));
-	}
-	return invalidSym;
 }
 
 static SymbolData getSymbolData(Elf *elf, const char *name, char type, bool modReloc)
@@ -406,6 +368,45 @@ static SymbolData getSymbolData(Elf *elf, const char *name, char type, bool modR
 }
 
 #ifdef SUPPORT_DISASSEMBLE
+
+static GElf_Sym getSymbolForReloc(Elf *elf, Elf64_Section sec, size_t offset)
+{
+	GElf_Rela rela;
+	GElf_Shdr shdr;
+	GElf_Sym invalidSym = {};
+	Elf_Scn *scn = getRelForSectionIndex(elf, sec);
+	if(scn == NULL)
+		return invalidSym;
+	Elf_Data *data = elf_getdata(scn, NULL);
+	gelf_getshdr(scn, &shdr);
+	size_t cnt = shdr.sh_size / shdr.sh_entsize;
+	for (size_t i = 0; i < cnt; i++)
+	{
+		gelf_getrela(data, i, &rela);
+		if (rela.r_offset == offset)
+			return getSymbolByIndex(elf, ELF64_R_SYM(rela.r_info));
+	}
+	return invalidSym;
+}
+
+static GElf_Sym getSymbolByOffset(Elf *elf, Elf64_Section shndx, size_t offset)
+{
+	Elf_Scn *scn = getSectionByName(elf, ".symtab");
+	GElf_Shdr shdr;
+	GElf_Sym sym = {};
+	Elf_Data *data = elf_getdata(scn, NULL);
+	gelf_getshdr(scn, &shdr);
+	size_t cnt = shdr.sh_size / shdr.sh_entsize;
+	for (size_t i = 0; i < cnt; i++)
+	{
+		gelf_getsym(data, i, &sym);
+		if (sym.st_name != 0 && sym.st_shndx == shndx && sym.st_value == offset)
+			return sym;
+	}
+	memset(&sym, 0, sizeof(sym));
+	return sym;
+}
+
 static int disasmPrintf(void *buf, const char *format, ...)
 {
 	char localBuf[MAX_DISASS_LINE_LEN];
@@ -535,7 +536,6 @@ static bool equalFunctions(Elf *elf, Elf *secondElf, const char *funName)
 
 static void findModifiedSymbols(Elf *elf, Elf *secondElf)
 {
-	SymbolData result;
 	Elf_Scn *scn = getSectionByName(elf, ".symtab");
 	if (scn == NULL)
 		LOG_ERR("Failed to find .symtab section");
@@ -638,7 +638,7 @@ static Elf *createNewElf(const char *outFile)
 	newData = elf_newdata(symtabScn);
 	gelf_getshdr(symtabScn, &shdr);
 
-	GElf_Sym emptySym = {};
+	GElf_Sym emptySym = {0};
 	newData->d_type = ELF_T_SYM;
 	newData->d_buf = malloc(sizeof(GElf_Sym));
 	CHECK_ALLOC(newData->d_buf);
@@ -794,7 +794,7 @@ static size_t copySymbol(Elf *elf, Elf *outElf, size_t index, bool fullCopy)
 	GElf_Shdr shdr;
 
 	size_t linkIndex = getLinkedSymbol(Symbols[index]);
-	if (Symbols[index]->name == NULL && linkIndex != -1)
+	if (Symbols[index]->name == NULL && linkIndex != (size_t)-1)
 		index = linkIndex;
 
 	if (Symbols[index]->copiedIndex)
@@ -850,7 +850,7 @@ static size_t copySymbol(Elf *elf, Elf *outElf, size_t index, bool fullCopy)
 			newSym.st_name = copyStrtabItem(elf, outElf, oldSym.st_name);
 	}
 
-	memcpy(data->d_buf + data->d_size, &newSym, sizeof(GElf_Sym));
+	memcpy((uint8_t *)data->d_buf + data->d_size, &newSym, sizeof(GElf_Sym));
 	data->d_size += sizeof(GElf_Sym);
 	shdr.sh_size = data->d_size;
 	gelf_update_shdr(scn, &shdr);
@@ -881,7 +881,6 @@ static void copyRelSection(Elf *elf, Elf *outElf, Elf64_Section index, size_t re
 	for (size_t i = 0; i < cnt; i++)
 	{
 		gelf_getrela(data, i, &rela);
-		size_t symOffset = rela.r_offset;
 		if (fromSym != NULL &&
 			(rela.r_offset < fromSym->st_value || rela.r_offset > fromSym->st_value + fromSym->st_size))
 			continue;
@@ -995,7 +994,7 @@ static void symbolCallees(Elf *elf, Symbol *s, size_t *result)
 		if (Symbols[symIndex]->st_info == STT_SECTION)
 		{
 			size_t linkIndex = getLinkedFuncSymbol(Symbols[symIndex]);
-			if (linkIndex != -1)
+			if (linkIndex != (size_t)-1)
 				symIndex = linkIndex;
 		}
 		if (Symbols[symIndex]->isFun)
@@ -1186,10 +1185,8 @@ static void extractSymbols(int argc, char *argv[])
 static void changeCallSymbol(int argc, char *argv[])
 {
 	char *filePath = NULL;
-	char *outFile = NULL;
 	char **symToCopy = calloc(argc, sizeof(char *));
 	CHECK_ALLOC(symToCopy);
-	char **syms;
 	int opt;
 	char *fromRelSym = NULL;
 	char *toRelSym = NULL;
