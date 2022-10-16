@@ -133,7 +133,7 @@ checkIfDmesgContains()
 checkIfDmesgNOTContains()
 {
 	local res=0
-	remoteSh cat /var/log/syslog
+	remoteSh dmesg
 	for i in "$@"; do
 		if grep -q "$i" <<< "$REMOTE_OUT"; then
 			>&2 echo -e "${RED}dmesg on remote contains unexpected:$i${NC}"
@@ -228,7 +228,7 @@ integrationTest()
 	# check simple modification
 	appendToFunction "$SOURCE_DIR/net/ipv4/tcp_ipv4.c" tcp_v4_connect "$text"
 
-	remoteSh "echo > /var/log/syslog"
+	remoteSh "dmesg --clear"
 	./deku -w "$WORKDIR" deploy
 	workdirContainsOnly deku_47910166_tcp_ipv4 || return 2
 	sleep 1
@@ -240,7 +240,7 @@ integrationTest()
 
 	# check whether the same changes in source code generates the same module id and prevents to upload
 	rm -rf "$WORKDIR/deku_47910166_tcp_ipv4"
-	remoteSh "echo > /var/log/syslog"
+	remoteSh "dmesg --clear"
 	./deku -w "$WORKDIR" deploy
 	sleep 1
 	checkIfDmesgNOTContains "livepatch: enabling patch 'deku_47910166_tcp_ipv4'" || return 4
@@ -253,7 +253,7 @@ integrationTest()
 
 	./deku -w "$WORKDIR" sync
 	checkIfWorkdirIsEmpty || return 5
-	remoteSh "echo > /var/log/syslog"
+	remoteSh "dmesg --clear"
 	./deku -w "$WORKDIR" deploy
 	checkIfWorkdirIsEmpty || return 6
 	remoteSh wget www.google.com -O /dev/null 2>/dev/null
@@ -265,7 +265,7 @@ integrationTest()
 	# check scenario when modify detection works after sync
 	appendToFunction "$SOURCE_DIR/net/ipv4/tcp_ipv4.c" tcp_v4_connect "$text2"
 
-	remoteSh "echo > /var/log/syslog"
+	remoteSh "dmesg --clear"
 	./deku -w "$WORKDIR" deploy
 	workdirContainsOnly deku_47910166_tcp_ipv4 || return 8
 	checkIfDmesgContains "livepatch: enabling patch 'deku_47910166_tcp_ipv4'" || return 9
@@ -283,14 +283,14 @@ integrationTest()
 	sleep 15
 	appendToFunction "$SOURCE_DIR/net/ipv4/tcp_ipv4.c" tcp_v4_connect "$text"
 	./deku -w "$WORKDIR" deploy
-	remoteSh "echo > /var/log/syslog"
+	remoteSh "dmesg --clear"
 	sleep 5
 	remoteSh wget www.google.com -O /dev/null 2>/dev/null
 	sleep 15
 	checkIfDmesgContains "tcp_v4_connect test" || return 11
 	git -C "$SOURCE_DIR" reset --hard
 	yes "y" | ./deku -w "$WORKDIR" deploy
-	remoteSh "echo > /var/log/syslog"
+	remoteSh "dmesg --clear"
 	remoteSh wget www.google.com -O /dev/null 2>/dev/null
 	sleep 5
 	checkIfDmesgNOTContains "tcp_v4_connect test" || return 12
