@@ -1,3 +1,9 @@
+/*
+* Author: Marek Maślanka
+* Project: DEKU
+* URL: https://github.com/MarekMaslanka/deku
+*/
+
 #include <linux/netlink.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -47,8 +53,11 @@ int main()
     sendmsg(sock_fd, &msg, 0);
 
     while(1) {
-        recvmsg(sock_fd, &msg, 0);
-        printf("%s", (char *)NLMSG_DATA(nlh));
+        size_t n = recvmsg(sock_fd, &msg, 0);
+        if (n <= 0)
+            break;
+        unsigned len = ((struct nlmsghdr *)msg.msg_iov->iov_base)->nlmsg_len;
+        fwrite(NLMSG_DATA(nlh), 1, len, stdout);
     }
     close(sock_fd);
 

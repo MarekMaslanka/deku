@@ -17,7 +17,7 @@
 #define DEKU_INSPECT_RETURN_VALUE "__DEKU_inspect_return_value"
 #define DEKU_INSPECT_FUN_END "__DEKU_inspect_fun_end"
 #define DEKU_INSPECT_FUN_POINTER "__DEKU_inspect_fun_pointer"
-#define DEKU_INSPECT_STACK_TRACE "__deku_gen_stacktrace"
+#define DEKU_INSPECT_STACK_TRACE "__DEKU_gen_stacktrace"
 
 #define LOG_DEBUG(fmt, ...)
 #define LOG_INFO(fmt, ...) printf(fmt, ##__VA_ARGS__)
@@ -718,7 +718,7 @@ void applyInspections(std::vector<Inspect> *inspects, char *filePath)
 			snprintf(endLineStr, sizeof(endLineStr), "%d", eLine);
 			id = genId(range, filePath, inspect.func.name, endLineStr, inspect.type);
 			fprintf(outFile, "%s(%u, \"%s\", %d, %d);", DEKU_INSPECT_FUNC, id, filePath, sLine, eLine);
-			fprintf(outFile, "%s(current, NULL, NULL, \"%s\", __func__);", DEKU_INSPECT_STACK_TRACE, filePath);
+			fprintf(outFile, "%s(%u);", DEKU_INSPECT_STACK_TRACE, id);
 		}
 		else if (inspect.type == INSPECT_FUNCTION_END)
 		{

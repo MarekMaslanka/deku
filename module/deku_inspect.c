@@ -7,28 +7,21 @@
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/module.h>
-#include <linux/kdev_t.h>
-#include <linux/fs.h>
-#include <linux/cdev.h>
-#include <linux/device.h>
 #include <linux/list.h>
-#include<linux/slab.h>
-#include<linux/uaccess.h>
-#include<linux/sysfs.h>
-#include<linux/kobject.h>
+#include <linux/slab.h>
 #include <linux/err.h>
-
 #include <linux/circ_buf.h>
-
 #include <linux/module.h>
 #include <net/sock.h>
 #include <linux/netlink.h>
 #include <linux/skbuff.h>
-
 #include <linux/sched.h>
 #include <linux/pid.h>
-
 #include <linux/workqueue.h>
+#include <linux/kallsyms.h>
+#include <asm/stacktrace.h>
+
+#include "deku_inspect.h"
 
 typedef enum
 {
@@ -58,36 +51,31 @@ typedef struct {
 	u64 value;
 } inspect_item;
 
-#define SYSFS_KERNEL_DIR "deku_inspect"
-#define SYSFS_MESSAGES_FILE messages
+struct inspect_stacktrace_item {
+	u32 id;
+	unsigned trial_num;
+	struct inspect_stacktrace stack;
+	struct list_head list;
+};
 
 #define NETLINK_USER 31
 
 static struct sock *nl_sk = NULL;
 
-static struct kobject *kobj_ref;
-
-static ssize_t  sysfs_show(struct kobject *kobj,
-	                    struct kobj_attribute *attr, char *buf);
-static ssize_t  sysfs_store(struct kobject *kobj,
-	                    struct kobj_attribute *attr,const char *buf, size_t count);
 void __deku_inspect_register_item(const char *file, unsigned line, const char *text, const char *extra, int type, u32 id);
 static inspect_map_item *get_inspect_map_item(unsigned id);
 
-struct kobj_attribute messages_attr = __ATTR(SYSFS_MESSAGES_FILE, 0660, sysfs_show, sysfs_store);
-
 static inspect_map_item inspect_map_head;
+static inspect_map_item stacktrace_head;
 int pid;
 
 static struct delayed_work *workq;
 #define WORKQUEUE_SCHEDULE_DELAY 0/*HZ/100*/
 
-u8 consumer_text_buf[PAGE_SIZE];
+char consumer_text_buf[PAGE_SIZE];
 
 #define BUFFER_SIZE 4096
 #define BUFFER_CNT(head, tail, size) (((head) - (tail)) & ((size)-1))
-u8 *BufferX = NULL;
-u8 *tail_bufX = NULL, *head_bufX = NULL;
 DEFINE_SPINLOCK(buf_spinlock);
 
 inspect_item *inspect_buffer = NULL;
@@ -106,7 +94,7 @@ DEFINE_SPINLOCK(producer_lock);
 
 void __deku_inspect(u32 id, u32 trial_num, u64 value)
 {
-	if (circ_space(&buf_crc) >= 1) {
+	if (circ_space(&buf_crc) > 0) {
 			inspect_item item;
 			item.id = id;
 			item.trial_num = trial_num;
@@ -120,16 +108,14 @@ void __deku_inspect(u32 id, u32 trial_num, u64 value)
 }
 EXPORT_SYMBOL(__deku_inspect);
 
-u8 ConsumeBuf[PAGE_SIZE];
-
 static int formatInspect(inspect_map_item *item_map, inspect_item *item)
 {
 	int n = 0;
 	switch (item_map->type) {
 	case INSPECT_FUNCTION:
 		n = snprintf(consumer_text_buf, sizeof(consumer_text_buf) - 1,
-					 "[%llu] DEKU Inspect: Function: %s:%s:%d:%s\n",
-					 item->time, item_map->file, item_map->name, item_map->line, item_map->extra);
+					 "[%llu] DEKU Inspect: Function: %s:%s:%d:%s:%pS\n",
+					 item->time, item_map->file, item_map->name, item_map->line, item_map->extra, item->value);
 		break;
 	case INSPECT_VAR:
 	case INSPECT_IF_COND:
@@ -163,6 +149,95 @@ static int formatInspect(inspect_map_item *item_map, inspect_item *item)
 	return n;
 }
 
+static const char * const exception_stack_names[] = {
+		[ ESTACK_DF	]	= "#DF",
+		[ ESTACK_NMI	]	= "NMI",
+		[ ESTACK_DB	]	= "#DB",
+		[ ESTACK_MCE	]	= "#MC",
+		[ ESTACK_VC	]	= "#VC",
+		[ ESTACK_VC2	]	= "#VC2",
+};
+
+const char *stack_type_name(enum stack_type type)
+{
+	if (type == STACK_TYPE_TASK)
+		return "TASK";
+
+	if (type == STACK_TYPE_IRQ)
+		return "IRQ";
+
+	if (type == STACK_TYPE_SOFTIRQ)
+		return "SOFTIRQ";
+
+	if (type == STACK_TYPE_ENTRY) {
+		/*
+		 * On 64-bit, we have a generic entry stack that we
+		 * use for all the kernel entry points, including
+		 * SYSENTER.
+		 */
+		return "ENTRY_TRAMPOLINE";
+	}
+
+	if (type >= STACK_TYPE_EXCEPTION && type <= STACK_TYPE_EXCEPTION_LAST)
+		return exception_stack_names[type - STACK_TYPE_EXCEPTION];
+
+	return NULL;
+}
+
+static char *formatStacktrace(inspect_map_item *item_map, struct inspect_stacktrace *stack)
+{
+	static char buffer[(KSYM_SYMBOL_LEN + 32*4) * STACKTRACE_MAX_SIZE];
+
+	char *buf = buffer;
+	int i = 0;
+	int stack_name_counter = 0;
+	buf += snprintf(buf, sizeof(buffer) - 1, "[%llu] DEKU Inspect: Function stacktrace:%s:%s ",
+					ktime_get_boottime_ns(), item_map->file, item_map->name);
+	for (; i < STACKTRACE_MAX_SIZE && stack->address[i] != 0; i++) {
+		void *addr = stack->address[i];
+		int remain_space = sizeof(buffer) - (buf - buffer) - 1;
+		if (addr <= (void *)STACK_TYPE_EXCEPTION_LAST) {
+			const char *stack_name = stack_type_name((enum stack_type)addr);
+			char *open_close_stack_fmt = stack_name_counter++ & 0x1 ? "<%s>," : "</%s>,";
+			buf += snprintf(buf, remain_space, open_close_stack_fmt, stack_name);
+		} else {
+			bool unreliable = test_bit(i, (unsigned long *)&stack->unreliable);
+			buf += snprintf(buf, remain_space, "%s%pBb,", unreliable ? "? " : "", (void *)addr);
+		}
+	}
+
+	buf[0] = '\n';
+	buf[1] = '\0';
+	return buffer;
+}
+
+static bool popStacktrace(unsigned id, unsigned trial_num, struct inspect_stacktrace *result)
+{
+	struct list_head *head;
+	struct inspect_stacktrace_item *entry;
+
+	// TODO: delete entry
+	list_for_each(head, &stacktrace_head.list) {
+		entry = list_entry(head, struct inspect_stacktrace_item, list);
+		if (entry->id == id && entry->trial_num == trial_num) {
+			*result = entry->stack;
+			return true;
+		}
+	}
+	return false;
+}
+
+static char *getStacktraceText(inspect_item *item, inspect_map_item *item_map, unsigned *len)
+{
+	struct inspect_stacktrace stack;
+	if (popStacktrace(item_map->id, item->trial_num, &stack)) {
+		char *text = formatStacktrace(item_map, &stack);
+		*len = strlen(text);
+		return text;
+	}
+	return NULL;
+}
+
 void consume_logs(void)
 {
 	bool reschedule = false;
@@ -172,7 +247,6 @@ void consume_logs(void)
 	struct sk_buff *skb;
 	unsigned long head;
 	unsigned long tail;
-	unsigned n;
 	int res;
 
 	if (pid == 0)
@@ -201,19 +275,28 @@ void consume_logs(void)
 		inspect_item item = inspect_buffer[tail];
 		inspect_map_item *item_map = get_inspect_map_item(item.id);
 		if (item_map) {
-			n = formatInspect(item_map, &item);
-			if (n < 0 || buf_cnt + n >= nlmsg_len(nlh) - 1) {
+			char *stackText = "";
+			unsigned stackTextLen = 0;
+			unsigned n = formatInspect(item_map, &item);
+			if (item_map->type == INSPECT_FUNCTION)
+				stackText = getStacktraceText(&item, item_map,
+							      &stackTextLen);
+			if (n < 0 || (buf_cnt + n + stackTextLen >= nlmsg_len(nlh) - 1)) {
 				reschedule = true;
 				break;
 			}
 
 			memcpy(((u8 *)nlmsg_data(nlh)) + buf_cnt, consumer_text_buf, n + 1);
 			buf_cnt += n;
+			if (stackTextLen) {
+				strcpy(((u8 *)nlmsg_data(nlh)) + buf_cnt, stackText);
+				buf_cnt += stackTextLen;
+			}
 		} else if (item.id != 0) {
 			pr_warn("Invalid inspect map id: %d\n", item.id);
 		}
 		smp_store_release(&buf_crc.tail,
-						  (tail + 1) & (BUFFER_SIZE - 1));
+				  (tail + 1) & (BUFFER_SIZE - 1));
 
 		head = smp_load_acquire(&buf_crc.head);
 		tail = buf_crc.tail;
@@ -235,150 +318,16 @@ void consume_logs(void)
 	}
 }
 
-#if 0
-void *__deku_inspect_get_memoryX(u32 id, unsigned size)
-{
-	unsigned data_size;
-	u8 *result;
-	spin_lock_irq(&buf_spinlock);
-	result = head_buf;
-	if (size < 4) size = 4;
-	pr_info("GET memory for id: %d size: %d\n", id, size);
-	data_size = sizeof(u32) + sizeof(u32) + sizeof(u64) + size;
-	if ((BUFFER_SIZE - BUFFER_CNT(head_buf, tail_buf, BUFFER_SIZE)) < data_size){
-			pr_info("============================= DISCARD REMAINING DATA 0: %p = %p ============\n",tail_buf, head_buf);
-			/*
-			The consumer does not consume data. Let's discard the data left
-			behind
-			*/
-			tail_buf = head_buf;
-	}
-	if ((head_buf - Buffer) + data_size > BUFFER_SIZE) {
-		pr_info("============================= ROLL OUT: ID: %d %d (%d < %d) ============\n", id, (head_buf - Buffer), tail_buf - Buffer, data_size);
-		if ((head_buf - Buffer) < BUFFER_SIZE)
-			/*
-			We can safe assume that there is at least 4 bytes free in the
-			buffer to write a 0 as a size beacuse minimal "size" argument is 4
-			*/
-			*((u32 *)head_buf) = 0;
-		result = Buffer;
-		if ((tail_buf - Buffer) < data_size) {
-			pr_info("============================= DISCARD REMAINING DATA 1: %p = %p ============\n",tail_buf, Buffer);
-			/*
-			The consumer does not consume data. Let's discard the data left
-			behind
-			*/
-			tail_buf = Buffer;
-		}
-	}
-	head_buf = result + data_size;
-	*((u32 *)result) = size;
-	result += sizeof(u32);
-	*((u32 *)result) = id;
-	result += sizeof(u32);
-	*((u64 *)result) = ktime_get_boottime_ns();
-	result += sizeof(u64);
-	spin_unlock_irq(&buf_spinlock);
-	return (void *)result;
-}
-EXPORT_SYMBOL(__deku_inspect_get_memoryX);
-
-u8 ConsumeBuf[PAGE_SIZE];
-void consume_logsX(void)
-{
-	unsigned buf_size = 0;
-	struct nlmsghdr *nlh;
-	struct sk_buff *skb;
-	unsigned size;
-	unsigned id;
-	unsigned n;
-	u64 value;
-	u64 time;
-	u8 *buf;
-	int res;
-
-	skb = nlmsg_new(NLMSG_DEFAULT_SIZE, 0);
-	if (!skb) {
-		printk(KERN_ERR "Failed to allocate new skb\n");
-		return;
-	}
-	nlh = nlmsg_put(skb, 0, 0, NLMSG_DONE, NLMSG_DEFAULT_SIZE, 0);
-	spin_lock_irq(&buf_spinlock);
-	buf = tail_buf;
-	if (buf == head_buf)
-		printk(KERN_INFO "No data to consume\n");
-
-	while(buf != head_buf) {
-		u8 *tmp_buf = buf;
-		if (buf == (Buffer + BUFFER_SIZE)) {
-			buf = Buffer;
-			pr_info("============================= CONSUMER ROLL OUT 0 ============ %p (%d)\n", buf, (int)*buf);
-			continue;
-		}
-		size = *((u32 *)tmp_buf);
-		if (size == 0) {
-			buf = Buffer;
-			pr_info("============================= CONSUMER ROLL OUT 1 ============ %p (%d)\n", buf, (int)*buf);
-			continue;
-		}
-		tmp_buf += sizeof(u32);
-		id = *((u32 *)tmp_buf);
-		tmp_buf += sizeof(u32);
-		time = *((u64 *)tmp_buf);
-		tmp_buf += sizeof(u64);
-		value = 0;
-		pr_info("%p / %p (%d/%d) ID: %d SIZE: %d\n", buf, head_buf, BUFFER_CNT(head_buf, tail_buf, BUFFER_SIZE), BUFFER_CNT(head_buf, buf, BUFFER_SIZE), id, size);
-		memcpy(&value, tmp_buf, size <= 8 ? size : 8);
-		n = snprintf(consumer_text_buf, sizeof(consumer_text_buf) - 1,
-					 "[%llu] Deku Inspect: id:%d size:%d value:%lld\n",time, id, size, value);
-		if (n < 50)
-			pr_info("============================= Invalid snprintf size: %d\n", n);
-		if (buf_size + n >= NLMSG_DEFAULT_SIZE) {
-			pr_info("No more space in out buffer\n");
-			break;
-		}
-		memcpy(((u8 *)nlmsg_data(nlh)) + buf_size, consumer_text_buf, n);
-		buf_size += n;
-		buf = tmp_buf + size;
-	}
-	if (buf_size == 0) {
-		spin_unlock_irq(&buf_spinlock);
-		printk(KERN_INFO "buf_size == 0\n");
-		return;
-	}
-
-	pr_info("Send: buf_size:%d / %d (%d) %p\n", buf_size, BUFFER_CNT(head_buf, buf, BUFFER_SIZE), head_buf == buf, buf);
-	NETLINK_CB(skb).dst_group = 0; /* not in mcast group */
-
-tail_buf = buf;
-spin_unlock_irq(&buf_spinlock);
-	if (pid) {
-		res = nlmsg_unicast(nl_sk, skb, pid);
-		if (res < 0)
-		{
-			// spin_unlock_irq(&buf_spinlock);
-			printk(KERN_INFO "Error while sending inspections to daemon\n");
-			return;
-		}
-	}
-}
-#endif
-
 static void nl_recv_msg(struct sk_buff *skb)
 {
 	struct nlmsghdr *nlh;
 	struct sk_buff *skb_out;
-	int msg_size;
-	char *msg = "Hello from kernel";
 	int res;
 
 	struct list_head *head;
 	inspect_map_item *entry;
 
-	msg_size = strlen(msg);
-
 	nlh = (struct nlmsghdr *)skb->data;
-	printk(KERN_INFO "Netlink received msg payload:%s\n", (char *)nlmsg_data(nlh));
 	pid = nlh->nlmsg_pid;
 
 	list_for_each(head, &inspect_map_head.list) {
@@ -393,7 +342,7 @@ static void nl_recv_msg(struct sk_buff *skb)
 		nlh->nlmsg_len = snprintf(nlmsg_data(nlh), nlmsg_len(nlh), "MAP: %s:%u:%s:%u:%u\n", entry->file, entry->line, entry->name, entry->type, entry->id);
 		res = nlmsg_unicast(nl_sk, skb_out, pid);
 		if (res < 0)
-			printk(KERN_INFO "Error while sending bak to user\n");
+			printk(KERN_INFO "Error while sending inspect map to user\n");
 	}
 }
 
@@ -413,25 +362,6 @@ static inspect_map_item *get_inspect_map_item(unsigned id)
 			return entry;
 	}
 	return NULL;
-}
-
-static ssize_t sysfs_show(struct kobject *kobj,
-	            struct kobj_attribute *attr, char *buf)
-{
-	    struct list_head *listptr;
-	    inspect_map_item *entry;
-	    ssize_t result = 0;
-	    list_for_each(listptr, &inspect_map_head.list) {
-	            entry = list_entry(listptr, inspect_map_item, list);
-	            result += sprintf(buf + result, "name = %s\n", entry->name);
-	    }
-	    return result;
-}
-
-static ssize_t sysfs_store(struct kobject *kobj,
-	            struct kobj_attribute *attr,const char *buf, size_t count)
-{
-	return 0;
 }
 
 void __deku_inspect_register_item(const char *file, unsigned line, const char *text, const char *extra, int type, u32 id)
@@ -464,29 +394,30 @@ unsigned __deku_inspect_trial_num(void)
 }
 EXPORT_SYMBOL(__deku_inspect_trial_num);
 
+void __deku_inspect_add_stacktrace(unsigned id, unsigned trial_num,
+				   struct inspect_stacktrace *stack)
+{
+	struct inspect_stacktrace_item *stacktace;
+	stacktace = kmalloc(sizeof(struct inspect_stacktrace_item), GFP_ATOMIC);
+	stacktace->id = id;
+	stacktace->trial_num = trial_num;
+	stacktace->stack = *stack;
+	list_add(&stacktace->list, &stacktrace_head.list);
+}
+EXPORT_SYMBOL(__deku_inspect_add_stacktrace);
+
 static int __init deku_driver_init(void)
 {
 	struct netlink_kernel_cfg cfg = {
 			.input = nl_recv_msg,
 	};
 	inspect_buffer = kmalloc(BUFFER_SIZE * sizeof(inspect_item), GFP_ATOMIC);
-	// Buffer = kmalloc(BUFFER_SIZE, GFP_ATOMIC);
-	// head_buf = tail_buf = Buffer;
 	INIT_LIST_HEAD(&inspect_map_head.list);
-
-	/*Creating a directory in /sys/kernel/ */
-	kobj_ref = kobject_create_and_add(SYSFS_KERNEL_DIR, kernel_kobj);
-
-	/*Creating sysfs file for deku_value*/
-	if(sysfs_create_file(kobj_ref, &messages_attr.attr)){
-			pr_err("Cannot create sysfs file......\n");
-			goto r_sysfs;
-	}
-
+	INIT_LIST_HEAD(&stacktrace_head.list);
 	nl_sk = netlink_kernel_create(&init_net, NETLINK_USER, &cfg);
 	if (!nl_sk) {
 	    printk(KERN_ALERT "Error creating socket.\n");
-	    return -10;
+	    goto r_netlink;
 	}
 
 	workq = kmalloc(sizeof(struct delayed_work), GFP_KERNEL);
@@ -495,10 +426,8 @@ static int __init deku_driver_init(void)
 	pr_info("DEKU Inspect daemon loaded\n");
 	return 0;
 
-r_sysfs:
+r_netlink:
 	kfree(inspect_buffer);
-	kobject_put(kobj_ref);
-	sysfs_remove_file(kernel_kobj, &messages_attr.attr);
 	return -1;
 }
 
@@ -506,9 +435,6 @@ static void __exit deku_driver_exit(void)
 {
 	flush_delayed_work(workq);
 	netlink_kernel_release(nl_sk);
-	kobject_put(kobj_ref);
-	sysfs_remove_file(kernel_kobj, &messages_attr.attr);
-	// kfree(Buffer);
 	kfree(inspect_buffer);
 	pr_info("DEKU Inspect daemon removed\n");
 }
@@ -518,5 +444,5 @@ module_exit(deku_driver_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Marek Maślanka <marek.maslanka@hotmail.com>");
-MODULE_DESCRIPTION("Linux device driver to manage inspections for DEKU");
+MODULE_DESCRIPTION("Linux driver to manage inspections for DEKU");
 MODULE_VERSION("1.0");

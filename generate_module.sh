@@ -64,6 +64,7 @@ generateLivepatchMakefile()
 	local makefile=$1
 	local file=$2
 	local module=$3
+	local inspect=$4
 	local pfile=$(filenameNoExt "$module")
 	local dir=`dirname $file`
 	local inc="$SOURCE_DIR/$dir"
@@ -73,6 +74,7 @@ generateLivepatchMakefile()
 	echo "KBUILD_EXTRA_SYMBOLS = module/Module.symvers" > $makefile
 	echo "KBUILD_MODPOST_WARN = 1" > $makefile
 	echo "KBUILD_CFLAGS += -ffunction-sections -fdata-sections" >> $makefile
+	[[ $inspect == 1 ]] && echo "KBUILD_CFLAGS += -I`pwd` -D__DEKU_INSPECT_" >> $makefile
 
 	echo "obj-m += $pfile.o" >> $makefile
 	echo "$pfile-objs := livepatch.o patch.o" >> $makefile
@@ -139,7 +141,6 @@ applyInspect()
 	cmd=$(cmdBuildFile "$srcfile")
 	[[ $cmd == "" ]] && { logInfo "Can't find command to build $srcfile"; return 1; }
 	[[ $compilefile != /* ]] && compilefile="`pwd`/$compilefile"
-	sed -i '0,/^$/s//#include "..\/..\/inspect_macro.h"/' "$compilefile"
 	local inspectmap=`dirname "$compilefile"`"/inspect_map.h"
 	local funcs=`sed -n 's/^\([a-zA-Z0-9_\/\.\-]\+\)\:\([a-zA-Z0-9_]\+\)\:\(.\+\)$/\2/p' "$INSPECT_FUNC_FILE" |\
 				 awk '!seen[$0]++'`
@@ -161,6 +162,7 @@ buildFile()
 	local srcfile=$1
 	local compilefile=$2
 	local outfile=$3
+	local inspect=$4
 	local separatesections=1
 
 	local cmds=()
@@ -172,6 +174,7 @@ buildFile()
 	[[ $outfile != /* ]] && outfile="`pwd`/$outfile"
 	[[ $compilefile != /* ]] && compilefile="`pwd`/$compilefile"
 	[[ $separatesections != 0 ]] && cmd+=" -ffunction-sections -fdata-sections -Wno-declaration-after-statement"
+	[[ $inspect == 1 ]] && cmd+=" -I`pwd` -include `pwd`/inspect_macro.h"
 	cmd+=" -o $outfile $compilefile"
 
 	cd "$LINUX_HEADERS"
@@ -569,6 +572,7 @@ main()
 			local prev=$(<$moduledir/id)
 			[ "$prev" == "$moduleid" ] && continue
 		fi
+		local useinspect=`grep -q "\b$file\b" <<< "$filesinspect" && echo 1 || echo 0`
 
 		rm -rf $moduledir
 		mkdir $moduledir
@@ -584,16 +588,14 @@ main()
 		fi
 
 		cp "$SOURCE_DIR/$file" "$moduledir/$basename"
-		# if contains then apply trace inspector
-		# grep -q "\b$file\b" <<< "$filesinspect" && applyTraceInspector "$file" "$moduledir/$basename"
 		echo -n "$file" > "$moduledir/$FILE_SRC_PATH"
 
 		local usekbuild=0
 		buildFile $file "$moduledir/_$basename" "$moduledir/_$filename.o"
 		usekbuild=$?
 		if [[ $usekbuild == 0 ]]; then
-			applyInspect $file "$moduledir/$basename"
-			buildFile $file "$moduledir/$basename" "$moduledir/$filename.o"
+			[[ $useinspect == 1 ]] && applyInspect $file "$moduledir/$basename"
+			buildFile $file "$moduledir/$basename" "$moduledir/$filename.o" $useinspect
 			usekbuild=$?
 		fi
 
@@ -611,7 +613,7 @@ main()
 		fi
 
 		generateLivepatchSource "$moduledir" "$file" || continue
-		generateLivepatchMakefile "$moduledir/Makefile" "$file" "$module"
+		generateLivepatchMakefile "$moduledir/Makefile" "$file" "$module" $useinspect
 		buildLivepatchModule "$moduledir"
 
 		# restore calls to origin func XYZ instead of __deku_XYZ
