@@ -4,6 +4,6 @@ mklivepatch
 elfutils
 mkinspect
 inspectd
-dut_inspectd
+kinspectd
 test/rootfs.img
 test/testing_rsa

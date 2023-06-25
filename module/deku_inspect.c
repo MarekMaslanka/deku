@@ -4,6 +4,8 @@
 * URL: https://github.com/MarekMaslanka/deku
 */
 
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/module.h>
@@ -34,10 +36,21 @@ typedef enum
 	INSPECT_FUNCTION_END,
 } InspectType;
 
+enum InspectValType
+{
+	INSPECT_VAL_TYPE_UNKNOWN,
+	INSPECT_VAL_TYPE_INT,
+	INSPECT_VAL_TYPE_UINT,
+	INSPECT_VAL_TYPE_BOOL,
+	INSPECT_VAL_TYPE_STR,
+	INSPECT_VAL_TYPE_PTR,
+};
+
 typedef struct {
 	u32 id;
 	char *file;
 	unsigned line;
+	enum InspectValType valType;
 	InspectType type;
 	char *name;
 	char *extra;
@@ -62,7 +75,9 @@ struct inspect_stacktrace_item {
 
 static struct sock *nl_sk = NULL;
 
-void __deku_inspect_register_item(const char *file, unsigned line, const char *text, const char *extra, int type, u32 id);
+void __deku_inspect_register_item(const char *file, unsigned line,
+				  const char *text, const char *extra,
+				  int valType, int type, u32 id);
 static inspect_map_item *get_inspect_map_item(unsigned id);
 
 static inspect_map_item inspect_map_head;
@@ -95,15 +110,15 @@ DEFINE_SPINLOCK(producer_lock);
 void __deku_inspect(u32 id, u32 trial_num, u64 value)
 {
 	if (circ_space(&buf_crc) > 0) {
-			inspect_item item;
-			item.id = id;
-			item.trial_num = trial_num;
-			item.time = ktime_get_boottime_ns();
-			item.value = value;
-			inspect_buffer[buf_crc.head] = item;
+		inspect_item item;
+		item.id = id;
+		item.trial_num = trial_num;
+		item.time = ktime_get_boottime_ns();
+		item.value = value;
+		inspect_buffer[buf_crc.head] = item;
 
-			smp_store_release(&buf_crc.head,
-							(buf_crc.head + 1) & (BUFFER_SIZE - 1));
+		smp_store_release(&buf_crc.head,
+				  (buf_crc.head + 1) & (BUFFER_SIZE - 1));
 	}
 }
 EXPORT_SYMBOL(__deku_inspect);
@@ -111,51 +126,106 @@ EXPORT_SYMBOL(__deku_inspect);
 static int formatInspect(inspect_map_item *item_map, inspect_item *item)
 {
 	int n = 0;
+	char *buf = consumer_text_buf;
+	size_t buf_size = sizeof(consumer_text_buf) - 1;
 	switch (item_map->type) {
 	case INSPECT_FUNCTION:
-		n = snprintf(consumer_text_buf, sizeof(consumer_text_buf) - 1,
-					 "[%llu] DEKU Inspect: Function: %s:%s:%d:%s:%pS\n",
-					 item->time, item_map->file, item_map->name, item_map->line, item_map->extra, item->value);
+		n = snprintf(buf, buf_size,
+			     "[%llu] DEKU Inspect: Function: %s:%s:%d:%s:%pS\n",
+			     item->time, item_map->file, item_map->name,
+			     item_map->line, item_map->extra,
+			     (void *)item->value);
 		break;
 	case INSPECT_VAR:
-	case INSPECT_IF_COND:
-		n = snprintf(consumer_text_buf, sizeof(consumer_text_buf) - 1,
-					 "[%llu] DEKU Inspect: %s:%d %s = %lld\n",
-					 item->time, item_map->file, item_map->line, item_map->name, item->value);
+	case INSPECT_IF_COND: {
+		if (item_map->valType == INSPECT_VAL_TYPE_BOOL)
+		{
+			n = snprintf(buf, buf_size,
+				     "[%llu] DEKU Inspect: %s:%d %s = %s\n",
+				     item->time, item_map->file,
+				     item_map->line, item_map->name,
+				     item->value ? "true" : "false");
+		} else {
+			char *fmt;
+			switch (item_map->valType) {
+			case INSPECT_VAL_TYPE_PTR:
+				fmt = "[%llu] DEKU Inspect: %s:%d %s = 0x%p\n";
+				break;
+			case INSPECT_VAL_TYPE_INT:
+				fmt = "[%llu] DEKU Inspect: %s:%d %s = %lld\n";
+				break;
+			case INSPECT_VAL_TYPE_UINT:
+			default:
+				fmt = "[%llu] DEKU Inspect: %s:%d %s = %llu\n";
+				break;
+			}
+			n = snprintf(buf, buf_size, fmt, item->time,
+				     item_map->file, item_map->line,
+				     item_map->name, item->value);
+		}
 		break;
+	}
 	case INSPECT_FUN_PTR:
-		n = snprintf(consumer_text_buf, sizeof(consumer_text_buf) - 1,
-					 "[%llu] DEKU Inspect: Function Pointer: %s:%d:%s:%ps\n",
-					 item->time, item_map->file, item_map->line, item_map->name, item->value);
+		n = snprintf(buf, buf_size,
+			     "[%llu] DEKU Inspect: Function Pointer: %s:%d:%s:%ps\n",
+			     item->time, item_map->file, item_map->line,
+			     item_map->name, (void *)item->value);
 		break;
 	case INSPECT_RETURN_VALUE:
-		n = snprintf(consumer_text_buf, sizeof(consumer_text_buf) - 1,
-					 "[%llu] DEKU Inspect: Function return value: %s:%d:%s %s = %lld\n",
-					 item->time, item_map->file, item_map->line, item_map->name, item_map->extra, item->value);
+		if (item_map->valType == INSPECT_VAL_TYPE_BOOL)
+		{
+			n = snprintf(buf, buf_size,
+				     "[%llu] DEKU Inspect: Function return value: %s:%d:%s %s = %s\n",
+				     item->time, item_map->file,
+				     item_map->line, item_map->name,
+				     item_map->extra,
+				     item->value ? "true" : "false");
+		} else {
+			char *fmt;
+			switch (item_map->valType) {
+			case INSPECT_VAL_TYPE_PTR:
+				fmt = "[%llu] DEKU Inspect: Function return value: %s:%d:%s %s = 0x%p\n";
+				break;
+			case INSPECT_VAL_TYPE_INT:
+				fmt = "[%llu] DEKU Inspect: Function return value: %s:%d:%s %s = %lld\n";
+				break;
+			case INSPECT_VAL_TYPE_UINT:
+			default:
+				fmt = "[%llu] DEKU Inspect: Function return value: %s:%d:%s %s = %llu\n";
+				break;
+			}
+			n = snprintf(buf, buf_size, fmt, item->time,
+				     item_map->file, item_map->line,
+				     item_map->name, item_map->extra,
+				     item->value);
+		}
 		break;
 	case INSPECT_RETURN:
-		n = snprintf(consumer_text_buf, sizeof(consumer_text_buf) - 1,
-					 "[%llu] DEKU Inspect: Function return: %s:%d %s\n",
-					 item->time, item_map->file, item_map->line, item_map->name);
+		n = snprintf(buf, buf_size,
+			     "[%llu] DEKU Inspect: Function return: %s:%d %s\n",
+			     item->time, item_map->file, item_map->line,
+			     item_map->name);
 		break;
 	case INSPECT_FUNCTION_END:
-		n = snprintf(consumer_text_buf, sizeof(consumer_text_buf) - 1,
-					 "[%llu] DEKU Inspect: Function end: %s:%d:%s\n",
-					 item->time, item_map->file, item_map->line, item_map->name);
+		n = snprintf(buf, buf_size,
+			     "[%llu] DEKU Inspect: Function end: %s:%d:%s\n",
+			     item->time, item_map->file, item_map->line,
+			     item_map->name);
 		break;
 	default:
-		n = snprintf(consumer_text_buf, sizeof(consumer_text_buf) - 1, "UNKNOWN: %d\n", item_map->type);
+		n = snprintf(buf, buf_size,
+			     "UNKNOWN: %d\n", item_map->type);
 	}
 	return n;
 }
 
 static const char * const exception_stack_names[] = {
-		[ ESTACK_DF	]	= "#DF",
-		[ ESTACK_NMI	]	= "NMI",
-		[ ESTACK_DB	]	= "#DB",
-		[ ESTACK_MCE	]	= "#MC",
-		[ ESTACK_VC	]	= "#VC",
-		[ ESTACK_VC2	]	= "#VC2",
+	[ ESTACK_DF	]	= "#DF",
+	[ ESTACK_NMI	]	= "NMI",
+	[ ESTACK_DB	]	= "#DB",
+	[ ESTACK_MCE	]	= "#MC",
+	[ ESTACK_VC	]	= "#VC",
+	[ ESTACK_VC2	]	= "#VC2",
 };
 
 const char *stack_type_name(enum stack_type type)
@@ -313,17 +383,46 @@ void consume_logs(void)
 	if (res < 0)
 	{
 		pid = 0;
-		printk(KERN_INFO "Error while sending inspections to daemon. Result: %s\n", res);
+		pr_warn("Error while sending inspections to daemon. Result: %s\n", res);
 		return;
 	}
+}
+
+static void notify_new_inspect_map_item(inspect_map_item *item_map)
+{
+	int res;
+	int err = 0;
+	struct sk_buff *skb;
+	struct nlmsghdr *nlh;
+	if (pid == 0)
+		return;
+
+	skb = nlmsg_new(NLMSG_DEFAULT_SIZE, 0);
+	if (!skb) {
+		pr_err("Failed to allocate new skb\n");
+		return;
+	}
+	nlh = nlmsg_put(skb, 0, 0, NLMSG_DONE, NLMSG_DEFAULT_SIZE, 0);
+	if (!nlh) {
+		pr_err("Failed to a new netlink message to an skb\n");
+		return;
+	}
+	NETLINK_CB(skb).dst_group = 0;
+	nlh->nlmsg_len = snprintf(nlmsg_data(nlh), nlmsg_len(nlh),
+				  "MAP: %s:%u:%s:%u:%u:%u\n", item_map->file,
+				  item_map->line, item_map->name,
+				  item_map->type, item_map->valType,
+				  item_map->id);
+
+	res = nlmsg_unicast(nl_sk, skb, pid);
+	if (res < 0)
+		pr_warn("Error while sending inspect map to user. (%d) %s",
+			nlmsg_data(nlh));
 }
 
 static void nl_recv_msg(struct sk_buff *skb)
 {
 	struct nlmsghdr *nlh;
-	struct sk_buff *skb_out;
-	int res;
-
 	struct list_head *head;
 	inspect_map_item *entry;
 
@@ -332,17 +431,7 @@ static void nl_recv_msg(struct sk_buff *skb)
 
 	list_for_each(head, &inspect_map_head.list) {
 		entry = list_entry(head, inspect_map_item, list);
-		skb_out = nlmsg_new(NLMSG_DEFAULT_SIZE, 0);
-		if (!skb_out) {
-			printk(KERN_ERR "Failed to allocate new skb\n");
-			return;
-		}
-		nlh = nlmsg_put(skb_out, 0, 0, NLMSG_DONE, NLMSG_DEFAULT_SIZE, 0);
-		NETLINK_CB(skb_out).dst_group = 0;
-		nlh->nlmsg_len = snprintf(nlmsg_data(nlh), nlmsg_len(nlh), "MAP: %s:%u:%s:%u:%u\n", entry->file, entry->line, entry->name, entry->type, entry->id);
-		res = nlmsg_unicast(nl_sk, skb_out, pid);
-		if (res < 0)
-			printk(KERN_INFO "Error while sending inspect map to user\n");
+		notify_new_inspect_map_item(entry);
 	}
 }
 
@@ -364,19 +453,23 @@ static inspect_map_item *get_inspect_map_item(unsigned id)
 	return NULL;
 }
 
-void __deku_inspect_register_item(const char *file, unsigned line, const char *text, const char *extra, int type, u32 id)
+void __deku_inspect_register_item(const char *file, unsigned line,
+				  const char *text, const char *extra,
+				  int valType, int type, u32 id)
 {
 	inspect_map_item *item = kmalloc(sizeof(inspect_map_item), GFP_KERNEL);
-	item->file = kmalloc(strlen(file) + 1, GFP_ATOMIC);
+	item->file = kmalloc(strlen(file) + 1, GFP_KERNEL);
 	strcpy(item->file, file);
 	item->line = line;
-	item->name = kmalloc(strlen(text) + 1, GFP_ATOMIC);
+	item->name = kmalloc(strlen(text) + 1, GFP_KERNEL);
 	strcpy(item->name, text);
-	item->extra = kmalloc(strlen(extra) + 1, GFP_ATOMIC);
+	item->extra = kmalloc(strlen(extra) + 1, GFP_KERNEL);
 	strcpy(item->extra, extra);
 	item->id = id;
+	item->valType = valType;
 	item->type = type;
 	list_add(&item->list, &inspect_map_head.list);
+	notify_new_inspect_map_item(item);
 }
 EXPORT_SYMBOL(__deku_inspect_register_item);
 

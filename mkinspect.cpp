@@ -26,9 +26,21 @@
 		LOG_INFO("Failed to alloc memory in %s (%s:%d)", __func__, __FILE__, __LINE__); \
 		exit(1);\
 	}
+
+typedef enum
+{
+	INSPECT_VAL_TYPE_UNKNOWN,
+	INSPECT_VAL_TYPE_INT,
+	INSPECT_VAL_TYPE_UINT,
+	INSPECT_VAL_TYPE_BOOL,
+	INSPECT_VAL_TYPE_STR,
+	INSPECT_VAL_TYPE_PTR,
+} InspectValType;
+
 typedef struct
 {
 	CXSourceRange range;
+	InspectValType type;
 	CXCursor cursor;
 } InspectIfCond;
 typedef struct
@@ -43,6 +55,7 @@ typedef struct
 	CXSourceRange range;
 	char *varName;
 	bool init;
+	InspectValType type;
 	CXCursor cursor;
 } InspectVar;
 
@@ -60,6 +73,7 @@ typedef struct
 	CXSourceRange range;
 	bool valueNonLiteral;
 	char *funName;
+	InspectValType type;
 } InspectReturn;
 
 typedef struct
@@ -293,6 +307,25 @@ bool canBeInspected(CXCursor cursor)
 	return true;
 }
 
+InspectValType getInspectValType(CXCursor cursor)
+{
+	CXTypeKind type = clang_getCursorType(cursor).kind;
+	CXTypeKind canonType = clang_getCanonicalType(clang_getCursorType(cursor)).kind;
+	switch (canonType)
+	{
+	case CXType_Bool:
+		return INSPECT_VAL_TYPE_BOOL;
+	case CXType_Int:
+		return INSPECT_VAL_TYPE_INT;
+	case CXType_UInt:
+		return INSPECT_VAL_TYPE_UINT;
+	case CXType_Pointer:
+		return INSPECT_VAL_TYPE_PTR;
+	default:
+		return (InspectValType)((int)canonType + 100);
+	}
+}
+
 void addIfStmtCond(CXCursor cursor, InspectIfConds *ctx)
 {
 	CXSourceRange range = clang_getCursorExtent(cursor);
@@ -316,7 +349,7 @@ void addIfStmtCond(CXCursor cursor, InspectIfConds *ctx)
 			}
 		}
 		if (!exists)
-			ctx->conds.push_back({ .range = range, .cursor = cursor });
+			ctx->conds.push_back({ .range = range, .type = getInspectValType(cursor), .cursor = cursor });
 	}
 }
 
@@ -333,12 +366,6 @@ CXChildVisitResult ifStmtCondVisitor(CXCursor cursor, CXCursor parent, CXClientD
 		addIfStmtCond(cursor, (InspectIfConds *)ctx);
 		return CXChildVisit_Continue;
 	}
-	// if (kind == CXCursor_IntegerLiteral)
-	// {
-	// 	CXToken *token = clang_getToken(translationUnit, clang_getCursorLocation(cursor));
-	// 	puts(clang_getCString(clang_getTokenSpelling(translationUnit, *token)));
-	// 	return CXChildVisit_Continue;
-	// }
 
 	return CXChildVisit_Recurse;
 }
@@ -402,12 +429,12 @@ CXChildVisitResult funBodyInspectVisitor(CXCursor cursor, CXCursor parent, CXCli
 		buf = clang_getFileContents(translationUnit, file, NULL);
 		if (memchr(buf + sOffset, '=', eOffset - sOffset))
 		{
-			clang_Type_getSizeOf(clang_getCursorType(cursor));
 			CXString name = clang_getCursorSpelling(cursor);
 			InspectVar var = {};
 			var.range = range;
 			var.init = true;
 			var.cursor = cursor;
+			var.type = getInspectValType(cursor);
 			var.varName = strdup(clang_getCString(name));
 			CHECK_ALLOC(var.varName);
 			ctx->inspects.push_back({.type = INSPECT_VAR, .var = var});
@@ -446,11 +473,13 @@ CXChildVisitResult funBodyInspectVisitor(CXCursor cursor, CXCursor parent, CXCli
 			if (!canBeInspected(cursor))
 				return CXChildVisit_Recurse;
 
+			CXCursor tokenCursor = clang_getCursor(translationUnit, clang_getRangeStart(tokenRange));
 			CXString name = clang_getTokenSpelling(translationUnit, tokens[0]);
 			InspectVar var = {};
 			var.range = range;
 			var.init = false;
 			var.cursor = cursor;
+			var.type = getInspectValType(tokenCursor);
 			var.varName = strdup(clang_getCString(name));
 			CHECK_ALLOC(var.varName);
 			ctx->inspects.push_back({.type = INSPECT_VAR, .var = var});
@@ -471,9 +500,23 @@ CXChildVisitResult funBodyInspectVisitor(CXCursor cursor, CXCursor parent, CXCli
 		ret.funName = strdup(ctx->name);
 		ret.valueNonLiteral = false;
 		if (numTokens == 2)
+		{
+			auto location = clang_getTokenLocation(translationUnit, tokens[1]);
+			CXCursor tokenCursor = clang_getCursor(translationUnit, location);
+			ret.type = getInspectValType(tokenCursor);
 			ret.valueNonLiteral = clang_getTokenKind(tokens[1]) != CXToken_Literal;
+			if ((int)ret.type >= 100)
+				ret.type = INSPECT_VAL_TYPE_INT;
+		}
 		else if (numTokens > 2)
+		{
 			ret.valueNonLiteral = true;
+			ret.type = INSPECT_VAL_TYPE_INT;
+		}
+		else
+		{
+			ret.type = INSPECT_VAL_TYPE_UNKNOWN;
+		}
 		ctx->inspects.push_back({.type = numTokens > 1 ? INSPECT_RETURN_VALUE : INSPECT_RETURN, .ret = ret});
 		clang_disposeTokens(translationUnit, tokens, numTokens);
 	}
@@ -572,7 +615,7 @@ void getInspectionsForFunction(FunctionInspectCtx *funCtx)
 	unsigned int res = clang_visitChildren(rootCursor, *functionInspectVisitor, funCtx);
 }
 
-uint32_t genId(CXSourceRange range, const char *filePath, const char *text, const char *extra, InspectType type)
+uint32_t genId(CXSourceRange range, const char *filePath, const char *text, const char *extra, InspectValType valType, InspectType type)
 {
 	unsigned int line, column, offset;
 	CXSourceLocation startloc = type != INSPECT_FUNCTION_END ?
@@ -586,7 +629,7 @@ uint32_t genId(CXSourceRange range, const char *filePath, const char *text, cons
 	}
 	size_t bufSize = strlen(filePath) + strlen(text) + 32;
 	char *buf = (char *)malloc(bufSize);
-	snprintf(buf, bufSize, "%s:%d:%s:%s:%d", filePath, line, text, extra, type);
+	snprintf(buf, bufSize, "%s:%d:%s:%s:%d:%d", filePath, line, text, extra, valType, type);
 	uint32_t sum = crc32((uint8_t *)buf, strlen(buf));
 	fprintf(inspectMapFile, "%s:%u\n", buf, sum);
 	free(buf);
@@ -619,8 +662,8 @@ void applyInspections(std::vector<Inspect> *inspects, char *filePath)
 			clang_getFileLocation(clang_getRangeEnd(range), NULL, NULL, NULL, &offset);
 			fwrite(&sourceBuf[prevPos], 1, offset - prevPos + 1, outFile);
 			prevPos = offset + 1;
-			id = genId(range, filePath, inspect.var.varName, "", inspect.type);
-			fprintf(outFile, "%s(%u, \"%s\", %s);", DEKU_INSPECT_VAR, id, filePath, inspect.var.varName);
+			id = genId(range, filePath, inspect.var.varName, "", inspect.var.type, inspect.type);
+			fprintf(outFile, "%s(%u, %s);", DEKU_INSPECT_VAR, id, inspect.var.varName);
 			if (!inspect.var.init)
 				fwrite("}", 1, 1, outFile);
 			free(inspect.var.varName);
@@ -636,8 +679,8 @@ void applyInspections(std::vector<Inspect> *inspects, char *filePath)
 				prevPos = offset;
 				if (getCallFunctionPtr(cond.cursor, &ptr, &params))
 				{
-					id = genId(range, filePath, ptr, "", INSPECT_FUN_PTR);
-					fprintf(outFile, "%s(%u, \"%s\", %s, %s)", DEKU_INSPECT_FUN_POINTER, id, filePath, ptr, params);
+					id = genId(range, filePath, ptr, "", cond.type, INSPECT_FUN_PTR);
+					fprintf(outFile, "%s(%u, %s, %s)", DEKU_INSPECT_FUN_POINTER, id, ptr, params);
 					clang_getFileLocation(clang_getRangeEnd(range), NULL, NULL, NULL, &offset);
 					free(ptr);
 					free(params);
@@ -647,8 +690,8 @@ void applyInspections(std::vector<Inspect> *inspects, char *filePath)
 					clang_getFileLocation(clang_getRangeEnd(cond.range), NULL, NULL, NULL, &offset);
 					char *text = strndup(&sourceBuf[prevPos], offset - prevPos);
 					CHECK_ALLOC(text);
-					id = genId(range, filePath, text, "", inspect.type);
-					fprintf(outFile, "%s(%u, \"%s\", %s)", DEKU_INSPECT_VAR, id, filePath, text);
+					id = genId(range, filePath, text, "", cond.type, inspect.type);
+					fprintf(outFile, "%s(%u, %s)", DEKU_INSPECT_VAR, id, text);
 					free(text);
 				}
 				prevPos = offset;
@@ -669,15 +712,15 @@ void applyInspections(std::vector<Inspect> *inspects, char *filePath)
 			clang_getFileLocation(clang_getRangeStart(range), NULL, NULL, NULL, &offset);
 			fwrite(&sourceBuf[prevPos], 1, offset - prevPos, outFile);
 			prevPos = offset;
-			id = genId(range, filePath, inspect.funPtr.ptr, "", inspect.type);
-			fprintf(outFile, "%s(%u, \"%s\", %s, %s)", DEKU_INSPECT_FUN_POINTER, id, filePath, inspect.funPtr.ptr, inspect.funPtr.params);
+			id = genId(range, filePath, inspect.funPtr.ptr, "", INSPECT_VAL_TYPE_PTR, inspect.type);
+			fprintf(outFile, "%s(%u, %s, %s)", DEKU_INSPECT_FUN_POINTER, id, inspect.funPtr.ptr, inspect.funPtr.params);
 			free(inspect.funPtr.params);
 			clang_getFileLocation(clang_getRangeEnd(range), NULL, NULL, NULL, &offset);
 			prevPos = offset;
 			if (inspect.funPtr.varAssign)
 			{
-				id = genId(range, filePath, inspect.funPtr.var.varName, "", inspect.type);
-				fprintf(outFile, ";%s(%u, \"%s\", %s)", DEKU_INSPECT_VAR, id, filePath, inspect.funPtr.var.varName);
+				id = genId(range, filePath, inspect.funPtr.var.varName, "", INSPECT_VAL_TYPE_PTR, inspect.type);
+				fprintf(outFile, ";%s(%u, %s)", DEKU_INSPECT_VAR, id, inspect.funPtr.var.varName);
 				if (!inspect.funPtr.var.init)
 					fwrite(";}", 1, 2, outFile);
 				free(inspect.funPtr.var.varName);
@@ -689,8 +732,8 @@ void applyInspections(std::vector<Inspect> *inspects, char *filePath)
 			clang_getFileLocation(clang_getRangeStart(range), NULL, NULL, NULL, &offset);
 			fwrite(&sourceBuf[prevPos], 1, offset - prevPos, outFile);
 			prevPos = offset + strlen("return;");
-			id = genId(range, filePath, inspect.ret.funName, "", inspect.type);
-			fprintf(outFile, "{ %s(%u, \"%s\");return;}", DEKU_INSPECT_RETURN, id, filePath);
+			id = genId(range, filePath, inspect.ret.funName, "", inspect.ret.type, inspect.type);
+			fprintf(outFile, "{ %s(%u);return;}", DEKU_INSPECT_RETURN, id);
 		}
 		else if (inspect.type == INSPECT_RETURN_VALUE)
 		{
@@ -701,8 +744,8 @@ void applyInspections(std::vector<Inspect> *inspects, char *filePath)
 			clang_getFileLocation(clang_getRangeEnd(range), NULL, NULL, NULL, &offset);
 			char *text = strndup(&sourceBuf[prevPos], offset - prevPos);
 			CHECK_ALLOC(text);
-			id = genId(range, filePath, inspect.ret.funName, text, inspect.type);
-			fprintf(outFile, "{return %s(%u, \"%s\", %s);}", DEKU_INSPECT_RETURN_VALUE, id, filePath, text);
+			id = genId(range, filePath, inspect.ret.funName, text, inspect.ret.type, inspect.type);
+			fprintf(outFile, "{return %s(%u, %s);}", DEKU_INSPECT_RETURN_VALUE, id, text);
 			prevPos = offset;
 			free(text);
 		}
@@ -716,8 +759,8 @@ void applyInspections(std::vector<Inspect> *inspects, char *filePath)
 			prevPos = offset + 1;
 			char endLineStr[16];
 			snprintf(endLineStr, sizeof(endLineStr), "%d", eLine);
-			id = genId(range, filePath, inspect.func.name, endLineStr, inspect.type);
-			fprintf(outFile, "%s(%u, \"%s\", %d, %d);", DEKU_INSPECT_FUNC, id, filePath, sLine, eLine);
+			id = genId(range, filePath, inspect.func.name, endLineStr, INSPECT_VAL_TYPE_UNKNOWN, inspect.type);
+			fprintf(outFile, "%s(%u);", DEKU_INSPECT_FUNC, id);
 			fprintf(outFile, "%s(%u);", DEKU_INSPECT_STACK_TRACE, id);
 		}
 		else if (inspect.type == INSPECT_FUNCTION_END)
@@ -726,8 +769,8 @@ void applyInspections(std::vector<Inspect> *inspects, char *filePath)
 			clang_getFileLocation(clang_getRangeEnd(range), NULL, NULL, NULL, &offset);
 			fwrite(&sourceBuf[prevPos], 1, offset - prevPos - 1, outFile);
 			prevPos = offset - 1;
-			id = genId(range, filePath, inspect.func.name, "", inspect.type);
-			fprintf(outFile, "%s(%u, \"%s\");", DEKU_INSPECT_FUN_END, id, filePath);
+			id = genId(range, filePath, inspect.func.name, "", INSPECT_VAL_TYPE_UNKNOWN, inspect.type);
+			fprintf(outFile, "%s(%u);", DEKU_INSPECT_FUN_END, id);
 		}
 	}
 	fwrite(&sourceBuf[prevPos], 1, fSize - prevPos, outFile);

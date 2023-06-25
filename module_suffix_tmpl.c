@@ -4,7 +4,9 @@
 * URL: https://github.com/MarekMaslanka/deku
 */
 
-void __deku_inspect_register_item(const char *file, unsigned line, const char *text, const char *extra, int type, unsigned id);
+void __deku_inspect_register_item(const char *file, unsigned line,
+				  const char *text, const char *extra,
+				  int valType, int type, u32 id);
 
 static int deku_init(void)
 {
