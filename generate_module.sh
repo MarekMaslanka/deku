@@ -153,7 +153,7 @@ applyInspect()
 	local res=$?
 	cd $OLDPWD
 	[[ $res != 0 ]] && logInfo "Failed to build $srcfile"
-	sed -i -r 's/^(.+):(.+):(.*):(.*):(.+):(.+):(.+)$/'$INSPECT_REGISTER_FN'("\1", \2, "\3", "\4", \5, \6, \7);/g' "$inspectmap"
+	sed -i -r 's/^(.+):([0-9]+):(.*):(.*):([0-9]+):([0-9]+):(.+)$/'$INSPECT_REGISTER_FN'("\1", \2, "\3", "\4", \5, \6, \7);/g' "$inspectmap"
 	return $res
 }
 

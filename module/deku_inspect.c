@@ -73,15 +73,13 @@ static inspect_map_item stacktrace_head;
 static struct dentry *root_dentry;
 static struct dentry *inspect_dentry;
 
-char consumer_text_buf[PAGE_SIZE];
+static char consumer_text_buf[PAGE_SIZE];
 
 #define BUFFER_SIZE 4096
 #define BUFFER_CNT(head, tail, size) (((head) - (tail)) & ((size)-1))
-DEFINE_SPINLOCK(buf_spinlock);
 
-inspect_item *inspect_buffer = NULL;
-u8 *tail_buf = NULL, *head_buf = NULL;
-struct circ_buf buf_crc;
+static inspect_item *inspect_buffer = NULL;
+static struct circ_buf buf_crc;
 
 #define circ_count(circ) \
 	(CIRC_CNT((circ)->head, (circ)->tail, BUFFER_SIZE))
@@ -91,7 +89,9 @@ struct circ_buf buf_crc;
 	(CIRC_SPACE((circ)->head, READ_ONCE((circ)->tail), BUFFER_SIZE))
 #define circ_space_to_end(circ) \
 	(CIRC_SPACE_TO_END((circ)->head, (circ)->tail, BUFFER_SIZE))
-DEFINE_SPINLOCK(producer_lock);
+
+static bool inspect_enabled = true;
+static DEFINE_MUTEX(read_mutex);
 
 void __deku_inspect(u32 id, u32 trial_num, u64 value)
 {
@@ -269,17 +269,19 @@ static char *formatStacktrace(inspect_map_item *item_map, struct inspect_stacktr
 
 static bool popStacktrace(unsigned id, unsigned trial_num, struct inspect_stacktrace *result)
 {
-	struct list_head *head;
+	struct list_head *head, *tmp;
 	struct inspect_stacktrace_item *entry;
 
-	// TODO: delete entry
-	list_for_each(head, &stacktrace_head.list) {
+	list_for_each_safe(head, tmp, &stacktrace_head.list){
 		entry = list_entry(head, struct inspect_stacktrace_item, list);
 		if (entry->id == id && entry->trial_num == trial_num) {
 			*result = entry->stack;
+			list_del(&entry->list);
+			kfree(entry);
 			return true;
 		}
 	}
+
 	return false;
 }
 
@@ -389,14 +391,26 @@ static ssize_t read_inspect(struct file *filp, char __user *ubuf, size_t cnt,
 	unsigned long head;
 	unsigned long tail;
 
+	mutex_lock(&read_mutex);
+	if (!inspect_enabled) {
+		mutex_unlock(&read_mutex);
+		return 0;
+	}
+
 	head = smp_load_acquire(&buf_crc.head);
 	tail = buf_crc.tail;
 
 	while (CIRC_CNT(head, tail, BUFFER_SIZE) == 0) {
 		set_current_state(TASK_INTERRUPTIBLE);
-		schedule_timeout(HZ/5);
-		if (signal_pending(current))
+		schedule_timeout(HZ / 5);
+		if (signal_pending(current)) {
+			mutex_unlock(&read_mutex);
 			return -EINTR;
+		}
+		if (!inspect_enabled) {
+			mutex_unlock(&read_mutex);
+			return 0;
+		}
 
 		head = smp_load_acquire(&buf_crc.head);
 		tail = buf_crc.tail;
@@ -436,6 +450,7 @@ static ssize_t read_inspect(struct file *filp, char __user *ubuf, size_t cnt,
 		tail = buf_crc.tail;
 	}
 
+	mutex_unlock(&read_mutex);
 	return buf_cnt;
 }
 
@@ -447,7 +462,8 @@ static struct file_operations inspect_fops = {
 
 static int __init deku_driver_init(void)
 {
-	inspect_buffer = kmalloc(BUFFER_SIZE * sizeof(inspect_item), GFP_ATOMIC);
+	inspect_buffer = kmalloc(BUFFER_SIZE * sizeof(inspect_item),
+				 GFP_ATOMIC);
 	if (!inspect_buffer) {
 		pr_err("Can't alloc inspect buffer\n");
 		return -1;
@@ -466,9 +482,26 @@ static int __init deku_driver_init(void)
 
 static void __exit deku_driver_exit(void)
 {
+	struct list_head *pos, *q;
+	inspect_map_item *entry;
+
+	inspect_enabled = false;
+
+	mutex_lock(&read_mutex);
+
 	debugfs_remove(inspect_dentry);
 	debugfs_remove(root_dentry);
+
+	list_for_each_safe(pos, q, &inspect_map_head.list){
+		entry = list_entry(pos, inspect_map_item, list);
+		list_del(pos);
+		kfree(entry);
+	}
+
 	kfree(inspect_buffer);
+
+	mutex_unlock(&read_mutex);
+
 	pr_info("DEKU Inspect daemon removed\n");
 }
 

@@ -32,7 +32,7 @@ inspectd: inspectd.c
 	$(CC) inspectd.c -o inspectd
 
 clean:
-	rm -f mklivepatch elfutils inspect inspectd
+	rm -f mklivepatch elfutils mkinspect inspectd
 
 deploy:
 	$(warning Using DEKU with "make deploy" is deprecated and will be removed soon. Instead, use the "./deku deploy" command.)

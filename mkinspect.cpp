@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <ctype.h>
 
 #define DEKU_INSPECT_FUNC "__DEKU_inspect_fun"
 #define DEKU_INSPECT_VAR "__DEKU_inspect"
@@ -193,12 +194,45 @@ static uint32_t crc32(uint8_t *data, uint32_t len)
 	return crc;
 }
 
+static bool isNumber(const char *str)
+{
+	int length = strlen(str);
+	for (int i = 0; i < length; i++)
+	{
+		if (!isdigit(str[i]))
+			return false;
+	}
+	return true;
+}
+
+static bool isInspectableString(const char *str)
+{
+	return !(strcmp(str, "NULL") == 0 || isNumber(str) || strstr(str, "0x") == str);
+}
+
+static bool isInspectableToken(CXToken *token)
+{
+	bool result = true;
+	if (token == NULL)
+		return true;
+	CXString cxStr = clang_getTokenSpelling(translationUnit, *token);
+	if (!isInspectableString(clang_getCString(cxStr)))
+		result = false;
+	clang_disposeString(cxStr);
+	return result;
+}
+
 char *getOriginSource(CXSourceLocation start, CXSourceLocation end)
 {
 	CXFile file;
 	unsigned int sOffset, eOffset;
-	clang_getFileLocation(start, &file, NULL, NULL, &sOffset);
-	clang_getFileLocation(end, NULL, NULL, NULL, &eOffset);
+	unsigned int sLine, sColumn, eLine, eColumn;
+	clang_getFileLocation(start, &file, &sLine, &sColumn, &sOffset);
+	clang_getFileLocation(end, NULL, &eLine, &eColumn, &eOffset);
+	if (eOffset < sOffset) {
+		LOG_INFO("Invalid source code request: %d:%d %d:%d>\n", sLine, sColumn, eLine, eColumn);
+		return (char *)calloc(1, 1);
+	}
 	const char *buf = clang_getFileContents(translationUnit, file, NULL);
 	char *result = (char *)calloc(eOffset - sOffset + 1, 1);
 	CHECK_ALLOC(result);
@@ -388,6 +422,8 @@ CXChildVisitResult funBodyInspectVisitor(CXCursor cursor, CXCursor parent, CXCli
 
 		unsigned numTokens;
 		clang_tokenize(translationUnit, range, &tokens, &numTokens);
+		if (numTokens == 0)
+			return CXChildVisit_Continue;
 		unsigned paren = 0;
 		for (int i = 0; i < numTokens; i++)
 		{
@@ -447,6 +483,8 @@ CXChildVisitResult funBodyInspectVisitor(CXCursor cursor, CXCursor parent, CXCli
 	{
 		if (clang_getCursorKind(parent) == CXCursor_ForStmt)
 			return CXChildVisit_Recurse;
+		if (!canBeInspected(cursor))
+			return CXChildVisit_Recurse;
 
 		range = clang_getCursorExtent(cursor);
 		clang_tokenize(translationUnit, range, &tokens, &numTokens);
@@ -459,52 +497,36 @@ CXChildVisitResult funBodyInspectVisitor(CXCursor cursor, CXCursor parent, CXCli
 			return CXChildVisit_Recurse;
 		}
 
-		CXString cStr = clang_getTokenSpelling(translationUnit, tokens[1]);
-		const char *str = clang_getCString(cStr);
-		if (strcmp(str, "=") == 0 || kind == CXCursor_CompoundAssignOperator)
+		for (int i = 1; i < numTokens; i++)
 		{
-			if (!canBeInspected(cursor))
-				return CXChildVisit_Recurse;
-
-			CXSourceRange tokenRange = clang_getTokenExtent(translationUnit, tokens[0]);
-			CXCursor tokenCursor = clang_getCursor(translationUnit, clang_getRangeStart(tokenRange));
-			CXString name = clang_getTokenSpelling(translationUnit, tokens[0]);
-			InspectVar var = {};
-			var.range = range;
-			var.init = false;
-			var.cursor = cursor;
-			var.type = getInspectValType(tokenCursor);
-			var.varName = strdup(clang_getCString(name));
-			CHECK_ALLOC(var.varName);
-			ctx->inspects.push_back({.type = INSPECT_VAR, .var = var});
-			addVarTestResult(&var);
-			clang_disposeString(name);
-		}
-		else if (strcmp(str, "->") == 0 || strcmp(str, ".") == 0)
-		{
-			CXSourceRange tokenRange = clang_getTokenExtent(translationUnit, tokens[0]);
-			for (int i = 0; i < numTokens; i++)
+			CXSourceLocation loc = clang_getTokenLocation(translationUnit, tokens[i]);
+			CXCursor tokenCursor = clang_getCursor(translationUnit, loc);
+			kind = clang_getCursorKind(tokenCursor);
+			if (kind == CXCursor_BinaryOperator || kind == CXCursor_CompoundAssignOperator)
 			{
-				CXString text = clang_getTokenSpelling(translationUnit, tokens[i]);
-				if (strcmp(clang_getCString(text), "=") == 0)
+				if (i == numTokens - 2)
 				{
-					CXSourceLocation start = clang_getTokenLocation(translationUnit, tokens[0]);
-					CXSourceRange prevTokenRange = clang_getTokenExtent(translationUnit, tokens[i - 1]);
-					CXSourceLocation end = clang_getRangeEnd(prevTokenRange);
-					InspectVar var = {};
-					var.range = range;
-					var.init = false;
-					var.cursor = cursor;
-					var.type = getInspectValType(cursor);
-					var.varName = getOriginSource(start, end);
-					CHECK_ALLOC(var.varName);
-					ctx->inspects.push_back({.type = INSPECT_VAR, .var = var});
-					addVarTestResult(&var);
+					if (!isInspectableToken(&tokens[numTokens - 1]))
+					{
+						clang_disposeTokens(translationUnit, tokens, numTokens);
+						return CXChildVisit_Continue;
+					}
 				}
-				clang_disposeString(text);
+				CXSourceLocation start = clang_getTokenLocation(translationUnit, tokens[0]);
+				CXSourceRange prevTokenRange = clang_getTokenExtent(translationUnit, tokens[i - 1]);
+				CXSourceLocation end = clang_getRangeEnd(prevTokenRange);
+				InspectVar var = {};
+				var.range = range;
+				var.init = false;
+				var.cursor = cursor;
+				var.type = getInspectValType(cursor);
+				var.varName = getOriginSource(start, end);
+				CHECK_ALLOC(var.varName);
+				ctx->inspects.push_back({.type = INSPECT_VAR, .var = var});
+				addVarTestResult(&var);
+				break;
 			}
 		}
-		clang_disposeString(cStr);
 		clang_disposeTokens(translationUnit, tokens, numTokens);
 	}
 	else if (kind == CXCursor_ReturnStmt)
@@ -631,7 +653,7 @@ void getInspectionsForFunction(FunctionInspectCtx *funCtx)
 	unsigned int res = clang_visitChildren(rootCursor, *functionInspectVisitor, funCtx);
 }
 
-uint32_t genId(CXSourceRange range, const char *filePath, const char *text, const char *extra, InspectValType valType, InspectType type)
+uint32_t genId(CXSourceRange range, const char *filePath, char *text, const char *extra, InspectValType valType, InspectType type)
 {
 	unsigned int line, column, offset;
 	CXSourceLocation startloc = type != INSPECT_FUNCTION_END ?
@@ -643,9 +665,15 @@ uint32_t genId(CXSourceRange range, const char *filePath, const char *text, cons
 		LOG_INFO("Invalid token at %d:%d\n", line, column);
 		return 0;
 	}
-	size_t bufSize = strlen(filePath) + strlen(text) + 32;
+
+	size_t bufSize = strlen(filePath) + strlen(text)  + strlen(extra) + 32;
 	char *buf = (char *)malloc(bufSize);
-	snprintf(buf, bufSize, "%s:%d:%s:%s:%d:%d", filePath, line, text, extra, valType, type);
+	int n = snprintf(buf, bufSize, "%s:%d:%s:%s:%d:%d", filePath, line, text, extra, valType, type);
+	for (int i = 0; i < n; i++)
+	{
+		if (buf[i] == '\r' || buf[i] == '\n')
+			buf[i] = ' ';
+	}
 	uint32_t sum = crc32((uint8_t *)buf, strlen(buf));
 	fprintf(inspectMapFile, "%s:%u\n", buf, sum);
 	free(buf);
@@ -711,11 +739,18 @@ void applyInspections(std::vector<Inspect> *inspects, char *filePath)
 					clang_getFileLocation(clang_getRangeEnd(cond.range), NULL, NULL, NULL, &offset);
 					char *text = strndup(&sourceBuf[prevPos], offset - prevPos);
 					CHECK_ALLOC(text);
-					id = genId(range, filePath, text, "", cond.type, inspect.type);
-					if (id)
-						fprintf(outFile, "%s(%u, %s)", DEKU_INSPECT_VAR, id, text);
-					else
+					if (!isInspectableString(text))
+					{
 						fprintf(outFile, "%s", text);
+					}
+					else
+					{
+						id = genId(range, filePath, text, "", cond.type, inspect.type);
+						if (id)
+							fprintf(outFile, "%s(%u, %s)", DEKU_INSPECT_VAR, id, text);
+						else
+							fprintf(outFile, "%s", text);
+					}
 					free(text);
 				}
 				prevPos = offset;
