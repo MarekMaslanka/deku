@@ -463,16 +463,10 @@ CXChildVisitResult funBodyInspectVisitor(CXCursor cursor, CXCursor parent, CXCli
 		const char *str = clang_getCString(cStr);
 		if (strcmp(str, "=") == 0 || kind == CXCursor_CompoundAssignOperator)
 		{
-			clang_getSpellingLocation(clang_getRangeEnd(range), NULL, &eLine, &eColumn, NULL);
-
-			unsigned varLine, varStartColumn, varEndColumn;
-			CXSourceRange tokenRange = clang_getTokenExtent(translationUnit, tokens[0]);
-			clang_getSpellingLocation(clang_getRangeStart(tokenRange), NULL, &varLine, &varStartColumn, NULL);
-			clang_getSpellingLocation(clang_getRangeEnd(tokenRange), NULL, NULL, &varEndColumn, NULL);
-
 			if (!canBeInspected(cursor))
 				return CXChildVisit_Recurse;
 
+			CXSourceRange tokenRange = clang_getTokenExtent(translationUnit, tokens[0]);
 			CXCursor tokenCursor = clang_getCursor(translationUnit, clang_getRangeStart(tokenRange));
 			CXString name = clang_getTokenSpelling(translationUnit, tokens[0]);
 			InspectVar var = {};
@@ -483,10 +477,32 @@ CXChildVisitResult funBodyInspectVisitor(CXCursor cursor, CXCursor parent, CXCli
 			var.varName = strdup(clang_getCString(name));
 			CHECK_ALLOC(var.varName);
 			ctx->inspects.push_back({.type = INSPECT_VAR, .var = var});
-
-			LOG_DEBUG("<%d %d:%d, %d:%d>\n", varLine, varStartColumn, varEndColumn, eLine, eColumn);
 			addVarTestResult(&var);
 			clang_disposeString(name);
+		}
+		else if (strcmp(str, "->") == 0 || strcmp(str, ".") == 0)
+		{
+			CXSourceRange tokenRange = clang_getTokenExtent(translationUnit, tokens[0]);
+			for (int i = 0; i < numTokens; i++)
+			{
+				CXString text = clang_getTokenSpelling(translationUnit, tokens[i]);
+				if (strcmp(clang_getCString(text), "=") == 0)
+				{
+					CXSourceLocation start = clang_getTokenLocation(translationUnit, tokens[0]);
+					CXSourceRange prevTokenRange = clang_getTokenExtent(translationUnit, tokens[i - 1]);
+					CXSourceLocation end = clang_getRangeEnd(prevTokenRange);
+					InspectVar var = {};
+					var.range = range;
+					var.init = false;
+					var.cursor = cursor;
+					var.type = getInspectValType(cursor);
+					var.varName = getOriginSource(start, end);
+					CHECK_ALLOC(var.varName);
+					ctx->inspects.push_back({.type = INSPECT_VAR, .var = var});
+					addVarTestResult(&var);
+				}
+				clang_disposeString(text);
+			}
 		}
 		clang_disposeString(cStr);
 		clang_disposeTokens(translationUnit, tokens, numTokens);
@@ -654,6 +670,8 @@ void applyInspections(std::vector<Inspect> *inspects, char *filePath)
 		{
 			range = inspect.var.range;
 			clang_getFileLocation(clang_getRangeStart(range), NULL, NULL, NULL, &offset);
+			if (offset < prevPos)
+				continue; // in case: "a = b = 0;"" skip the second inspect
 			fwrite(&sourceBuf[prevPos], 1, offset - prevPos, outFile);
 			prevPos = offset;
 			if (!inspect.var.init)
