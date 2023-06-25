@@ -123,7 +123,7 @@ main()
 	echo -e $reloadscript > $workdir/$DEKU_RELOAD_SCRIPT
 
 	ssh $SSHPARAMS mkdir -p $dstdir
-	scp $SCPPARAMS $files $workdir/$DEKU_RELOAD_SCRIPT $workdir/inspect/deku_inspect.ko kinspectd $host:$dstdir/
+	scp $SCPPARAMS $files $workdir/$DEKU_RELOAD_SCRIPT $workdir/inspect/deku_inspect.ko $host:$dstdir/
 	logInfo "Loading..."
 	remoteSh sh "$dstdir/$DEKU_RELOAD_SCRIPT 2>&1"
 	local rc=$?

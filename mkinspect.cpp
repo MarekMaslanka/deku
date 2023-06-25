@@ -681,7 +681,10 @@ void applyInspections(std::vector<Inspect> *inspects, char *filePath)
 			fwrite(&sourceBuf[prevPos], 1, offset - prevPos + 1, outFile);
 			prevPos = offset + 1;
 			id = genId(range, filePath, inspect.var.varName, "", inspect.var.type, inspect.type);
-			fprintf(outFile, "%s(%u, %s);", DEKU_INSPECT_VAR, id, inspect.var.varName);
+			if (id)
+				fprintf(outFile, "%s(%u, %s);", DEKU_INSPECT_VAR, id, inspect.var.varName);
+			else
+				fprintf(outFile, "%s", inspect.var.varName);
 			if (!inspect.var.init)
 				fwrite("}", 1, 1, outFile);
 			free(inspect.var.varName);
@@ -709,7 +712,10 @@ void applyInspections(std::vector<Inspect> *inspects, char *filePath)
 					char *text = strndup(&sourceBuf[prevPos], offset - prevPos);
 					CHECK_ALLOC(text);
 					id = genId(range, filePath, text, "", cond.type, inspect.type);
-					fprintf(outFile, "%s(%u, %s)", DEKU_INSPECT_VAR, id, text);
+					if (id)
+						fprintf(outFile, "%s(%u, %s)", DEKU_INSPECT_VAR, id, text);
+					else
+						fprintf(outFile, "%s", text);
 					free(text);
 				}
 				prevPos = offset;

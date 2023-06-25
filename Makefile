@@ -4,7 +4,7 @@
 
 .PHONY: deploy
 
-all: mklivepatch elfutils mkinspect inspectd kinspectd
+all: mklivepatch elfutils mkinspect inspectd
 
 WORKDIR=
 ifdef workdir
@@ -31,11 +31,8 @@ mkinspect: mkinspect.cpp
 inspectd: inspectd.c
 	$(CC) inspectd.c -o inspectd
 
-kinspectd: kinspectd.c
-	$(CC) kinspectd.c -o kinspectd
-
 clean:
-	rm -f mklivepatch elfutils inspect inspectd kinspectd
+	rm -f mklivepatch elfutils inspect inspectd
 
 deploy:
 	$(warning Using DEKU with "make deploy" is deprecated and will be removed soon. Instead, use the "./deku deploy" command.)

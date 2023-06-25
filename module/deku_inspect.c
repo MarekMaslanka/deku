@@ -13,15 +13,9 @@
 #include <linux/slab.h>
 #include <linux/err.h>
 #include <linux/circ_buf.h>
-#include <linux/module.h>
-#include <net/sock.h>
-#include <linux/netlink.h>
-#include <linux/skbuff.h>
-#include <linux/sched.h>
-#include <linux/pid.h>
-#include <linux/workqueue.h>
 #include <linux/kallsyms.h>
 #include <asm/stacktrace.h>
+#include <linux/debugfs.h>
 
 #include "deku_inspect.h"
 
@@ -71,21 +65,13 @@ struct inspect_stacktrace_item {
 	struct list_head list;
 };
 
-#define NETLINK_USER 31
-
-static struct sock *nl_sk = NULL;
-
-void __deku_inspect_register_item(const char *file, unsigned line,
-				  const char *text, const char *extra,
-				  int valType, int type, u32 id);
 static inspect_map_item *get_inspect_map_item(unsigned id);
 
 static inspect_map_item inspect_map_head;
 static inspect_map_item stacktrace_head;
-int pid;
 
-static struct delayed_work *workq;
-#define WORKQUEUE_SCHEDULE_DELAY 0/*HZ/100*/
+static struct dentry *root_dentry;
+static struct dentry *inspect_dentry;
 
 char consumer_text_buf[PAGE_SIZE];
 
@@ -308,136 +294,9 @@ static char *getStacktraceText(inspect_item *item, inspect_map_item *item_map, u
 	return NULL;
 }
 
-void consume_logs(void)
-{
-	bool reschedule = false;
-	struct pid *pid_struct;
-	unsigned buf_cnt = 0;
-	struct nlmsghdr *nlh;
-	struct sk_buff *skb;
-	unsigned long head;
-	unsigned long tail;
-	int res;
-
-	if (pid == 0)
-		return;
-
-	pid_struct = find_get_pid(pid);
-	if (pid_task(pid_struct, PIDTYPE_PID) == NULL) {
-		pid = 0;
-		return;
-	}
-
-	skb = nlmsg_new(NLMSG_DEFAULT_SIZE, 0);
-	if (!skb) {
-		printk(KERN_ERR "Failed to allocate new skb\n");
-		return;
-	}
-
-	NETLINK_CB(skb).dst_group = 0;
-	nlh = nlmsg_put(skb, 0, 0, NLMSG_DONE, NLMSG_DEFAULT_SIZE, 0);
-
-	spin_lock_irq(&buf_spinlock);
-	head = smp_load_acquire(&buf_crc.head);
-	tail = buf_crc.tail;
-
-	while (CIRC_CNT(head, tail, BUFFER_SIZE) > 0) {
-		inspect_item item = inspect_buffer[tail];
-		inspect_map_item *item_map = get_inspect_map_item(item.id);
-		if (item_map) {
-			char *stackText = "";
-			unsigned stackTextLen = 0;
-			unsigned n = formatInspect(item_map, &item);
-			if (item_map->type == INSPECT_FUNCTION)
-				stackText = getStacktraceText(&item, item_map,
-							      &stackTextLen);
-			if (n < 0 || (buf_cnt + n + stackTextLen >= nlmsg_len(nlh) - 1)) {
-				reschedule = true;
-				break;
-			}
-
-			memcpy(((u8 *)nlmsg_data(nlh)) + buf_cnt, consumer_text_buf, n + 1);
-			buf_cnt += n;
-			if (stackTextLen) {
-				strcpy(((u8 *)nlmsg_data(nlh)) + buf_cnt, stackText);
-				buf_cnt += stackTextLen;
-			}
-		} else if (item.id != 0) {
-			pr_warn("Invalid inspect map id: %d\n", item.id);
-		}
-		smp_store_release(&buf_crc.tail,
-				  (tail + 1) & (BUFFER_SIZE - 1));
-
-		head = smp_load_acquire(&buf_crc.head);
-		tail = buf_crc.tail;
-	}
-	if (buf_cnt == 0) {
-		spin_unlock_irq(&buf_spinlock);
-		return;
-	}
-	spin_unlock_irq(&buf_spinlock);
-	nlh->nlmsg_len = buf_cnt;
-	res = nlmsg_unicast(nl_sk, skb, pid);
-	if (reschedule)
-		schedule_delayed_work(workq, WORKQUEUE_SCHEDULE_DELAY + HZ/100);
-	if (res < 0)
-	{
-		pid = 0;
-		pr_warn("Error while sending inspections to daemon. Result: %s\n", res);
-		return;
-	}
-}
-
 static void notify_new_inspect_map_item(inspect_map_item *item_map)
 {
-	int res;
-	int err = 0;
-	struct sk_buff *skb;
-	struct nlmsghdr *nlh;
-	if (pid == 0)
-		return;
-
-	skb = nlmsg_new(NLMSG_DEFAULT_SIZE, 0);
-	if (!skb) {
-		pr_err("Failed to allocate new skb\n");
-		return;
-	}
-	nlh = nlmsg_put(skb, 0, 0, NLMSG_DONE, NLMSG_DEFAULT_SIZE, 0);
-	if (!nlh) {
-		pr_err("Failed to a new netlink message to an skb\n");
-		return;
-	}
-	NETLINK_CB(skb).dst_group = 0;
-	nlh->nlmsg_len = snprintf(nlmsg_data(nlh), nlmsg_len(nlh),
-				  "MAP: %s:%u:%s:%u:%u:%u\n", item_map->file,
-				  item_map->line, item_map->name,
-				  item_map->type, item_map->valType,
-				  item_map->id);
-
-	res = nlmsg_unicast(nl_sk, skb, pid);
-	if (res < 0)
-		pr_warn("Error while sending inspect map to user. (%d) %s",
-			nlmsg_data(nlh));
-}
-
-static void nl_recv_msg(struct sk_buff *skb)
-{
-	struct nlmsghdr *nlh;
-	struct list_head *head;
-	inspect_map_item *entry;
-
-	nlh = (struct nlmsghdr *)skb->data;
-	pid = nlh->nlmsg_pid;
-
-	list_for_each(head, &inspect_map_head.list) {
-		entry = list_entry(head, inspect_map_item, list);
-		notify_new_inspect_map_item(entry);
-	}
-}
-
-void workq_fn(struct work_struct *work)
-{
-	consume_logs();
+	(void) item_map;
 }
 
 static inspect_map_item *get_inspect_map_item(unsigned id)
@@ -458,12 +317,28 @@ void __deku_inspect_register_item(const char *file, unsigned line,
 				  int valType, int type, u32 id)
 {
 	inspect_map_item *item = kmalloc(sizeof(inspect_map_item), GFP_KERNEL);
+	if (!item) {
+		pr_err("Failed to allocate new inspect_map_item\n");
+		return;
+	}
 	item->file = kmalloc(strlen(file) + 1, GFP_KERNEL);
+	if (!item->file) {
+		pr_err("Failed to allocate memory for file path\n");
+		return;
+	}
 	strcpy(item->file, file);
 	item->line = line;
 	item->name = kmalloc(strlen(text) + 1, GFP_KERNEL);
+	if (!item->name) {
+		pr_err("Failed to allocate memory for item name\n");
+		return;
+	}
 	strcpy(item->name, text);
 	item->extra = kmalloc(strlen(extra) + 1, GFP_KERNEL);
+	if (!item->extra) {
+		pr_err("Failed to allocate memory for item extra\n");
+		return;
+	}
 	strcpy(item->extra, extra);
 	item->id = id;
 	item->valType = valType;
@@ -475,8 +350,6 @@ EXPORT_SYMBOL(__deku_inspect_register_item);
 
 void __deku_inspect_fun_exit(void)
 {
-	if (pid)
-		schedule_delayed_work(workq, WORKQUEUE_SCHEDULE_DELAY);
 }
 EXPORT_SYMBOL(__deku_inspect_fun_exit);
 
@@ -499,35 +372,102 @@ void __deku_inspect_add_stacktrace(unsigned id, unsigned trial_num,
 }
 EXPORT_SYMBOL(__deku_inspect_add_stacktrace);
 
-static int __init deku_driver_init(void)
+static int open_inspect(struct inode *inode, struct file *filp)
 {
-	struct netlink_kernel_cfg cfg = {
-			.input = nl_recv_msg,
-	};
-	inspect_buffer = kmalloc(BUFFER_SIZE * sizeof(inspect_item), GFP_ATOMIC);
-	INIT_LIST_HEAD(&inspect_map_head.list);
-	INIT_LIST_HEAD(&stacktrace_head.list);
-	nl_sk = netlink_kernel_create(&init_net, NETLINK_USER, &cfg);
-	if (!nl_sk) {
-	    printk(KERN_ALERT "Error creating socket.\n");
-	    goto r_netlink;
+	return 0;
+}
+
+static int release_inspect(struct inode *inode, struct file *file)
+{
+	return 0;
+}
+
+static ssize_t read_inspect(struct file *filp, char __user *ubuf, size_t cnt,
+			    loff_t *ppos)
+{
+	unsigned buf_cnt = 0;
+	unsigned long head;
+	unsigned long tail;
+
+	head = smp_load_acquire(&buf_crc.head);
+	tail = buf_crc.tail;
+
+	while (CIRC_CNT(head, tail, BUFFER_SIZE) == 0) {
+		set_current_state(TASK_INTERRUPTIBLE);
+		schedule_timeout(HZ/5);
+		if (signal_pending(current))
+			return -EINTR;
+
+		head = smp_load_acquire(&buf_crc.head);
+		tail = buf_crc.tail;
 	}
 
-	workq = kmalloc(sizeof(struct delayed_work), GFP_KERNEL);
-	INIT_DELAYED_WORK(workq, workq_fn);
+	head = smp_load_acquire(&buf_crc.head);
+	tail = buf_crc.tail;
+
+	while (CIRC_CNT(head, tail, BUFFER_SIZE) > 0) {
+		inspect_item item = inspect_buffer[tail];
+		inspect_map_item *item_map = get_inspect_map_item(item.id);
+		if (item_map) {
+			char *stackText = "";
+			unsigned stackTextLen = 0;
+			unsigned n = formatInspect(item_map, &item);
+			if (item_map->type == INSPECT_FUNCTION)
+				stackText = getStacktraceText(&item, item_map,
+							      &stackTextLen);
+			if (n < 0 || (buf_cnt + n + stackTextLen >= cnt - 1))
+				break;
+
+			n = copy_to_user(ubuf + buf_cnt, consumer_text_buf,
+					 n + 1);
+			buf_cnt += n;
+			if (stackTextLen) {
+				n = copy_to_user(ubuf + buf_cnt, stackText,
+						 stackTextLen);
+				buf_cnt += stackTextLen;
+			}
+		} else if (item.id != 0) {
+			pr_warn("Invalid inspect map id: %d\n", item.id);
+		}
+		smp_store_release(&buf_crc.tail,
+				  (tail + 1) & (BUFFER_SIZE - 1));
+
+		head = smp_load_acquire(&buf_crc.head);
+		tail = buf_crc.tail;
+	}
+
+	return buf_cnt;
+}
+
+static struct file_operations inspect_fops = {
+	.open = open_inspect,
+	.read = read_inspect,
+	.release = release_inspect,
+};
+
+static int __init deku_driver_init(void)
+{
+	inspect_buffer = kmalloc(BUFFER_SIZE * sizeof(inspect_item), GFP_ATOMIC);
+	if (!inspect_buffer) {
+		pr_err("Can't alloc inspect buffer\n");
+		return -1;
+	}
+	root_dentry = debugfs_create_dir("deku", NULL);
+	inspect_dentry = debugfs_create_file("inspect",
+					     S_IRUGO, root_dentry, NULL,
+					     &inspect_fops);
+
+	INIT_LIST_HEAD(&inspect_map_head.list);
+	INIT_LIST_HEAD(&stacktrace_head.list);
 
 	pr_info("DEKU Inspect daemon loaded\n");
 	return 0;
-
-r_netlink:
-	kfree(inspect_buffer);
-	return -1;
 }
 
 static void __exit deku_driver_exit(void)
 {
-	flush_delayed_work(workq);
-	netlink_kernel_release(nl_sk);
+	debugfs_remove(inspect_dentry);
+	debugfs_remove(root_dentry);
 	kfree(inspect_buffer);
 	pr_info("DEKU Inspect daemon removed\n");
 }
