@@ -32,6 +32,12 @@ export DEKU_RELOAD_SCRIPT=deku_reload.sh
 # prefix for functions that manages DEKU
 export DEKU_FUN_PREFIX="__deku_fun_"
 
+# function name to register inspect entity
+export INSPECT_REGISTER_FN="__deku_inspect_register_item"
+
+# file with list of functions to inspect
+export INSPECT_FUNC_FILE="$workdir/tracefile"
+
 # file where kernel version is stored
 export KERNEL_VERSION_FILE="$workdir/version"
 

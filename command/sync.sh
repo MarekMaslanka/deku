@@ -13,6 +13,26 @@ regenerateSymbols()
 	done <<< "$files"
 }
 
+generateInspectModule()
+{
+	logInfo "Prepare inspect module..."
+	local makefile="$workdir/inspect/Makefile"
+
+	rm -rf "$workdir/inspect"
+	mkdir -p "$workdir/inspect"
+
+	echo "obj-m := deku_inspect.o" >> $makefile
+	echo "all:" >> $makefile
+	echo "	make -C $LINUX_HEADERS M=\$(PWD) modules" >> $makefile
+	echo "clean:" >> $makefile
+	echo "	make -C $LINUX_HEADERS M=\$(PWD) clean" >> $makefile
+
+	cp module/* "$workdir/inspect"
+	cd "$workdir/inspect"
+	make $USE_LLVM 2>&1 > /dev/null
+	cd $OLDPWD
+}
+
 main()
 {
 	local run=$1
@@ -25,6 +45,7 @@ main()
 	logInfo "Synchronize..."
 	rm -rf "$workdir"/deku_*
 	getKernelVersion > "$KERNEL_VERSION_FILE"
+	generateInspectModule
 	regenerateSymbols
 
 	if [ "$KERN_SRC_INSTALL_DIR" ]; then

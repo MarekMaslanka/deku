@@ -118,11 +118,12 @@ main()
 		fi
 	done
 	reloadscript+="\n$disablemod\n$transwait\n$rmmod$checkmod\nbreak;\nsleep 1\ndone"
+	reloadscript+="\ngrep -q deku_inspect /proc/modules || insmod $dstdir/deku_inspect.ko"
 	reloadscript+="\n$insmod"
 	echo -e $reloadscript > $workdir/$DEKU_RELOAD_SCRIPT
 
 	ssh $SSHPARAMS mkdir -p $dstdir
-	scp $SCPPARAMS $files $workdir/$DEKU_RELOAD_SCRIPT $host:$dstdir/
+	scp $SCPPARAMS $files $workdir/$DEKU_RELOAD_SCRIPT $workdir/inspect/deku_inspect.ko dut_inspectd $host:$dstdir/
 	logInfo "Loading..."
 	remoteSh sh "$dstdir/$DEKU_RELOAD_SCRIPT 2>&1"
 	local rc=$?

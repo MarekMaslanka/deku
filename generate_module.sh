@@ -23,8 +23,11 @@ getFileDiff()
 generateModuleId()
 {
 	local file=$1
+	local inspectid=`grep -s "$file" "$INSPECT_FUNC_FILE" | \
+					 sed -n 's/^\([a-zA-Z0-9_\/\.\-]\+\)\:\([a-zA-Z0-9_]\+\)\:\(.\+\)$/\2/p' | \
+					 sort -h`
 	local diff=$(getFileDiff $file)
-	local sum=`cat <(echo "$diff") | cksum | cut -d' ' -f1`
+	local sum=`cat <(echo "$diff") <(echo "$inspectid") | cksum | cut -d' ' -f1`
 	printf "0x%08x" $sum
 }
 
@@ -67,6 +70,7 @@ generateLivepatchMakefile()
 
 	[[ -f "$makefile" ]] && mv -f $makefile "${makefile}_modules"
 
+	echo "KBUILD_EXTRA_SYMBOLS = module/Module.symvers" > $makefile
 	echo "KBUILD_MODPOST_WARN = 1" > $makefile
 	echo "KBUILD_CFLAGS += -ffunction-sections -fdata-sections" >> $makefile
 
@@ -128,6 +132,30 @@ cmdBuildFile()
 	cmdarray=("${newcmd[*]}" "$extracmd")
 }
 
+applyInspect()
+{
+	local srcfile=$1
+	local compilefile=$2
+	cmd=$(cmdBuildFile "$srcfile")
+	[[ $cmd == "" ]] && { logInfo "Can't find command to build $srcfile"; return 1; }
+	[[ $compilefile != /* ]] && compilefile="`pwd`/$compilefile"
+	sed -i '0,/^$/s//#include "..\/..\/inspect_macro.h"/' "$compilefile"
+	local inspectmap=`dirname "$compilefile"`"/inspect_map.h"
+	local funcs=`sed -n 's/^\([a-zA-Z0-9_\/\.\-]\+\)\:\([a-zA-Z0-9_]\+\)\:\(.\+\)$/\2/p' "$INSPECT_FUNC_FILE" |\
+				 awk '!seen[$0]++'`
+	funcs=`echo $funcs | tr ' ' ','`
+	cmd+=" $compilefile"
+	cmd=${cmd#* }
+	cmd="`pwd`/mkinspect "$srcfile" $funcs "$inspectmap" $cmd"
+	cd "$LINUX_HEADERS"
+	eval "$cmd"
+	local res=$?
+	cd $OLDPWD
+	[[ $res != 0 ]] && logInfo "Failed to build $srcfile"
+	sed -i -r 's/^(.+):(.+):(.*):(.*):(.+):(.+)$/'$INSPECT_REGISTER_FN'("\1", \2, "\3", "\4", \5, \6);/g' "$inspectmap"
+	return $res
+}
+
 buildFile()
 {
 	local srcfile=$1
@@ -143,7 +171,7 @@ buildFile()
 	[[ $cmd == "" ]] && { logInfo "Can't find command to build $srcfile"; return 1; }
 	[[ $outfile != /* ]] && outfile="`pwd`/$outfile"
 	[[ $compilefile != /* ]] && compilefile="`pwd`/$compilefile"
-	[[ $separatesections != 0 ]] && cmd+=" -ffunction-sections -fdata-sections"
+	[[ $separatesections != 0 ]] && cmd+=" -ffunction-sections -fdata-sections -Wno-declaration-after-statement"
 	cmd+=" -o $outfile $compilefile"
 
 	cd "$LINUX_HEADERS"
@@ -436,9 +464,76 @@ buildInKernel()
 	return 1
 }
 
+traceFun()
+{
+	local file=$1
+	local lineno=$2
+	local filepath=$3
+	local tmpfile=$workdir/test3.c
+	sed -n $lineno',/^}$/p' "$file" > $tmpfile
+	local linecnt=`wc -l < "$tmpfile"`
+
+	LOG="__DEKU_inspect"
+	LOG_FUN="__DEKU_inspect_fun"
+	LOG_FUN_POINTER="__DEKU_inspect_fun_pointer"
+	LOG_FUN_END="__DEKU_inspect_fun_end"
+	LOG_RETURN_VOID="__DEKU_inspect_return"
+	LOG_RETURN_VALUE="__DEKU_inspect_return_value"
+	sed -i '0,/^{$/s//{'$LOG_FUN'\("'$filepath'", '$lineno', '$((linecnt + lineno - 1))');__deku_gen_stacktrace(current, NULL, NULL, "'$filepath'", __func__);/' "$tmpfile"
+	# sed -i -nr '1!H;1h;${x;s/([;{}/]\s+)([a-zA-Z0-9_\[\>\.-]+\]?)(\s*=\s*[^;]*)/\1\2\3;'$LOG'\(\2\)/g;p}' "$tmpfile"
+	sed -i -nr '1!H;1h;${x;s/([;{}/]\s+)([a-zA-Z0-9_\>\.-]+)(\s*=\s*[^;]*)/\1\2\3;'$LOG'\("'$filepath'", \2\)/g;p}' "$tmpfile"
+	sed -i -nr '1!H;1h;${x;s/([;{}/]\s+)([a-zA-Z0-9_]+\s+)([a-zA-Z0-9_\[\>\.-]+\]?)(\s*=\s*[^;]*)/\1\2\3\4;'$LOG'\("'$filepath'", \3\)/g;p}' "$tmpfile"
+	sed -i -nr '1!H;1h;${x;s/(\)\s+)([a-zA-Z0-9_\[\>\.-]+\]?)(\s*=\s*[^;]*)/\1{\2\3;'$LOG'\("'$filepath'", \2\);}/g;p}' "$tmpfile"
+	sed -i -r 's/(if\s*\()([!a-zA-Z0-9_\[\>\.-]+\]?)\)/\1'$LOG'("'$filepath'", \2))/g' "$tmpfile"
+	sed -i -r 's/(if\s*\()([!a-zA-Z0-9_\[\>\.-]+\]?)\s*([!=<>~&|]{2}|[\<\>&|%]{1})\s*([!a-zA-Z0-9_\>\.-]+)\)/\1\'$LOG'("'$filepath'", \2) \3 '$LOG'("'$filepath'", \4))/g' "$tmpfile"
+	sed -i -r 's/\s+([a-zA-Z0-9_]+\->[a-zA-Z0-9_]+)\s*\(.*\);$/{\0'$LOG_FUN_POINTER'("'$filepath'", "\1", \1);}/g' "$tmpfile"
+
+	if ! grep -q "\breturn\b" "$tmpfile"; then
+		sed -i -r 's/^}$/'$LOG_FUN_END'("'$filepath'");}/g' "$tmpfile"
+	elif grep -q "return;" "$tmpfile"; then
+		# sed -i -nr '1!H;1h;${x;s/\s+return;\s}/}/g;p}' "$tmpfile"
+		sed -i -r 's/\breturn;/'{$LOG_RETURN_VOID'("'$filepath'"); return;}/g' "$tmpfile"
+		sed -i -r 's/^}$/'$LOG_FUN_END'("'$filepath'");}/g' "$tmpfile"
+	elif grep -q "return\s.*;" "$tmpfile"; then
+		sed -i -r 's/\breturn\s+(.+);/'{$LOG_RETURN_VALUE'("'$filepath'", \1); return \1;}/g' "$tmpfile"
+	fi
+	((lineno--))
+	linecnt=$((linecnt + lineno))
+	local tmpcontent=$(<$tmpfile)
+	head -n $lineno "$file" > "$tmpfile"
+	echo "$tmpcontent" >> "$tmpfile"
+	awk "NR>$linecnt" "$file" >> "$tmpfile"
+	mv -f "$tmpfile" "$file"
+}
+
+filesInspect()
+{
+	[[ ! -e "$INSPECT_FUNC_FILE" ]] && return;
+	sed -n 's/^\([a-zA-Z0-9_\/\.\-]\+\)\:\([a-zA-Z0-9_]\+\)\:\(.\+\)$/\1/p' "$INSPECT_FUNC_FILE" | awk '!seen[$0]++'
+}
+
+applyTraceInspector()
+{
+	local file=$1
+	local outfile=$2
+	local tmpfile=$workdir/test2.c
+	local filepath=${file//\//\\/}
+	local patterns=`grep -F "$file" "$INSPECT_FUNC_FILE" | sed -n 's/^\([a-zA-Z0-9_\/\.\-]\+\)\:\([a-zA-Z0-9_]\+\)\:\(.\+\)$/\3/p'`
+	cp "$SOURCE_DIR/$file" "$tmpfile"
+	while read -r pattern; do
+		local line=`grep -nF "$pattern" "$SOURCE_DIR/$file" | cut -d : -f 1`
+		traceFun "$tmpfile" $line "$filepath"
+	done <<< "$patterns"
+	sed -i '0,/^$/s//#include "..\/..\/inspect_macro.h"/' "$tmpfile"
+	mv -f "$tmpfile" "$outfile"
+}
+
 main()
 {
 	local files=$(modifiedFiles)
+	local filesinspect=$(filesInspect)
+
+	files=`cat <(echo "$files") <(echo "$filesinspect") | awk '!seen[$0]++'`
 	if [ -z "$files" ]; then
 		# No modification detected
 		exit $NO_ERROR
@@ -489,12 +584,15 @@ main()
 		fi
 
 		cp "$SOURCE_DIR/$file" "$moduledir/$basename"
+		# if contains then apply trace inspector
+		# grep -q "\b$file\b" <<< "$filesinspect" && applyTraceInspector "$file" "$moduledir/$basename"
 		echo -n "$file" > "$moduledir/$FILE_SRC_PATH"
 
 		local usekbuild=0
 		buildFile $file "$moduledir/_$basename" "$moduledir/_$filename.o"
 		usekbuild=$?
 		if [[ $usekbuild == 0 ]]; then
+			applyInspect $file "$moduledir/$basename"
 			buildFile $file "$moduledir/$basename" "$moduledir/$filename.o"
 			usekbuild=$?
 		fi

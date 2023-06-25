@@ -67,6 +67,9 @@ relocations()
 	while read -r sym;
 	do
 		grep -q "\b$sym\b" "$modsymfile" && continue
+		[[ "$sym" == "_GLOBAL_OFFSET_TABLE_" ]] && continue;
+		[[ "$sym" == "__deku_inspect"* ]] && continue;
+		local srcfile=$(<$moduledir/$FILE_SRC_PATH)
 		local objname=$(findObjWithSymbol "$sym" "$srcfile")
 		if [[ $objname != "vmlinux" ]]; then
 			local objpath=`find $SYMBOLS_DIR -type f -name "$objname"`

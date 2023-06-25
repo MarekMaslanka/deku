@@ -2,5 +2,8 @@
 workdir_*
 mklivepatch
 elfutils
+mkinspect
+inspectd
+dut_inspectd
 test/rootfs.img
 test/testing_rsa
