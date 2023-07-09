@@ -14,16 +14,15 @@ endif
 CC ?= gcc
 CFLAG ?= -Werror -Wall -Wpedantic -Wextra -Wno-gnu-zero-variadic-macro-arguments
 
-ELFUTILS_FLAGS= $(CFLAG) -lelf
-ifdef SUPPORT_DISASSEMBLY
-	ELFUTILS_FLAGS=-DSUPPORT_DISASSEMBLY -lopcodes
-endif
+ELFUTILS_FLAGS= $(CFLAG) -lelf -lopcodes
 
 mklivepatch: mklivepatch.c
 	$(CC) mklivepatch.c $(CFLAG) -lelf -o $@
 
 elfutils: elfutils.c
-	$(CC) elfutils.c $(ELFUTILS_FLAGS) -o $@
+	$(shell echo "void t() { init_disassemble_info(NULL, 0, NULL); }" | \
+			$(CC) -DPACKAGE=1 -include dis-asm.h -S -o - -x c - > /dev/null 2>&1)
+	$(CC) elfutils.c $(ELFUTILS_FLAGS) -DDISASSEMBLY_STYLE_SUPPORT=$(.SHELLSTATUS) -o $@
 
 clean:
 	rm -f mklivepatch elfutils

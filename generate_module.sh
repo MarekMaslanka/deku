@@ -6,15 +6,15 @@
 # Generate livepatch module by compare elf files and extract changed functions
 
 RUN_POST_BUILD=0
+USE_SEPARATE_SECTIONS=
 
 getFileDiff()
 {
 	local file=$1
 	if [ "$KERN_SRC_INSTALL_DIR" ]; then
-		echo diff --unified "$SOURCE_DIR/$file" --label "$SOURCE_DIR/$file" \
-			 "$KERN_SRC_INSTALL_DIR/$file" --label "$KERN_SRC_INSTALL_DIR/$file"
-		diff --unified "$SOURCE_DIR/$file" --label "$SOURCE_DIR/$file" \
-			 "$KERN_SRC_INSTALL_DIR/$file" --label "$KERN_SRC_INSTALL_DIR/$file"
+		diff --unified "$KERN_SRC_INSTALL_DIR/$file" \
+			 --label "$KERN_SRC_INSTALL_DIR/$file" \
+			 "$SOURCE_DIR/$file" --label "$SOURCE_DIR/$file"
 	else
 		git -C "$workdir" diff --function-context -- $file
 	fi
@@ -23,8 +23,7 @@ getFileDiff()
 generateModuleId()
 {
 	local file=$1
-	local diff=$(getFileDiff $file)
-	local sum=`cat <(echo "$diff") | cksum | cut -d' ' -f1`
+	local sum=`cksum "$SOURCE_DIR/$file" | cut -d' ' -f1`
 	printf "0x%08x" $sum
 }
 
@@ -91,41 +90,48 @@ prepareToBuild()
 	echo 'MODULE_LICENSE("GPL");' >> "$moduledir/$basename"
 }
 
-cmdBuildFile()
+cmdFromMod()
 {
-	local srcfile=$1
-	local -n cmdarray=$2
-	local file="${srcfile##*/}"
-	local dir=`dirname "$srcfile"`
-	local cmdfile="$BUILD_DIR/$dir/.${file/.c/.o.cmd}"
-	[[ ! -f $cmdfile ]] && return
-	local skipparam=("-o")
-
-	local newcmd=()
-	local cmd=`head -n 1 $cmdfile`
-	cmd="${cmd#*=}"
-	local extracmd=
-	if [[ "$cmd" == *";"* ]]; then
-		extracmd="${cmd#*;}"
-		cmd="${cmd%%;*}"
+	local modfile=$1
+	local -n _cmd=$2
+	local -n _extracmd=$3
+	local -n _skipparam=$4
+	[[ ! -f $modfile ]] && return
+	local line=`head -n 1 $modfile`
+	line="${line#*=}"
+	if [[ "$line" == *";"* ]]; then
+		_extracmd=("${line#*;}")
+		line="${line%%;*}"
 	fi
-
+	_cmd=()
 	local skiparg=0
-	for opt in $cmd; do
+	local prevopt=
+	for opt in $line; do
 		[[ $skiparg != 0 ]] && { skiparg=0; continue; }
 		if [[ $opt == *"="* ]]; then
 			local param="${opt%%=*}"
 			local arg="${opt#*=}"
-			[[ " ${skipparam[*]} " =~ " ${param} " ]] && continue
+			[[ " ${_skipparam[*]} " =~ " ${param} " ]] && continue
 		else
-			[[ " ${skipparam[*]} " =~ " ${opt} " ]] && { skiparg=1; continue; }
+			[[ " ${_skipparam[*]} " =~ " ${opt} " ]] && { skiparg=1; continue; }
 		fi
-		newcmd+=("$opt")
+		_cmd+=("$opt")
 	done
-	unset 'newcmd[${#newcmd[@]}-1]'
-	newcmd+=("-I$SOURCE_DIR/$dir")
+}
 
-	cmdarray=("${newcmd[*]}" "$extracmd")
+cmdBuildFile()
+{
+	local srcfile=$1
+	local -n __cmd=$2
+	local -n __extracmd=$3
+	local file="${srcfile##*/}"
+	local dir=`dirname "$srcfile"`
+	local modfile="$BUILD_DIR/$dir/.${file/.c/.o.cmd}"
+	[[ ! -f $modfile ]] && return
+	local skipparam=("-o")
+	cmdFromMod "$modfile" __cmd __extracmd skipparam
+	unset '__cmd[${#__cmd[@]}-1]'
+	__cmd+=("-I$SOURCE_DIR/$dir")
 }
 
 buildFile()
@@ -133,17 +139,19 @@ buildFile()
 	local srcfile=$1
 	local compilefile=$2
 	local outfile=$3
-	local separatesections=1
+	local separatesections=$USE_SEPARATE_SECTIONS
+	local execextracmd=0
 
-	local cmds=()
-	cmdBuildFile "$srcfile" cmds
-	local cmd=${cmds[0]}
-	local extracmd=${cmds[1]}
+	local cmd=()
+	local extracmd={}
+	cmdBuildFile "$srcfile" cmd extracmd
+	cmd=${cmd[*]}
+	extracmd=${extracmd[*]}
 
 	[[ $cmd == "" ]] && { logInfo "Can't find command to build $srcfile"; return 1; }
 	[[ $outfile != /* ]] && outfile="`pwd`/$outfile"
 	[[ $compilefile != /* ]] && compilefile="`pwd`/$compilefile"
-	[[ $separatesections != 0 ]] && cmd+=" -ffunction-sections -fdata-sections"
+	[[ $separatesections ]] && cmd+=" -ffunction-sections -fdata-sections"
 	cmd+=" -o $outfile $compilefile"
 
 	cd "$LINUX_HEADERS"
@@ -156,10 +164,24 @@ buildFile()
 		return $rc
 	fi
 
-	if [[ "$extracmd" ]]; then
+	if [[ "$extracmd" && $execextracmd != 0 ]]; then
 		extracmd=`echo "$extracmd" | xargs`
 		if [[ "$extracmd" == "./tools/objtool/objtool"* && "$extracmd" == *".o" ]]; then
-			logErr "Kernel configurations with the CONFIG_OBJTOOL for stack validation are not supported yet."
+			local newextracmd=()
+			for opt in $extracmd; do
+				newextracmd+=("$opt")
+			done
+			unset 'newextracmd[${#newextracmd[@]}-1]'
+			newextracmd+=("$outfile")
+			newextracmd=`echo "${newextracmd[*]}"`
+
+			logDebug "Run extra command to build file: $newextracmd"
+			cd "$BUILD_DIR"
+			eval "$newextracmd"
+			rc=$?
+			cd $OLDPWD
+
+			[[ $rc != 0 ]] && logInfo "Failed to perform additional action for $srcfile ($newextracmd)"
 		else
 			logErr "Can't parse additional command to build file ($extracmd)"
 		fi
@@ -243,7 +265,10 @@ generateDiffObject()
 	local out=`./elfutils --diff -a "$moduledir/_$filename.o" -b "$moduledir/$filename.o"`
 	local tmpmodfun=`sed -n "s/^Modified function: \(.\+\)/\1/p" <<< "$out"`
 	local newfun=`sed -n "s/^New function: \(.\+\)/\1/p" <<< "$out"`
+	local newvar=`sed -n "s/^New variable: \(.\+\)/\1/p" <<< "$out"`
 	local modfun=()
+
+	logDebug "$out"
 
 	while read -r fun
 	do
@@ -289,7 +314,7 @@ generateDiffObject()
 
 	printf "%s\n" "${modfun[@]}" > "$moduledir/$MOD_SYMBOLS_FILE"
 
-	[[ "$newfun" == "" && ${#modfun[@]} == 0 ]] && return 0
+	[[ "$newfun" == "" && ${#modfun[@]} == 0 && "$newvar" == "" ]] && return 0
 
 	local originfuncs=`nm -C -f posix "$BUILD_DIR/${file%.*}.o" | grep -i " t " | cut -d ' ' -f 1`
 	local extractsyms=""
@@ -333,6 +358,12 @@ generateDiffObject()
 		[[ "$fun" == "" ]] && continue
 		extractsyms+="-s $fun "
 	done <<< "$newfun"
+
+	while read -r var;
+	do
+		[[ "$var" == "" ]] && continue
+		extractsyms+="-s $var "
+	done <<< "$newvar"
 
 	./elfutils --extract -f "$moduledir/$filename.o" -o "$moduledir/patch.o" $extractsyms
 	local rc=$?
@@ -492,7 +523,11 @@ main()
 		echo -n "$file" > "$moduledir/$FILE_SRC_PATH"
 
 		local usekbuild=0
-		buildFile $file "$moduledir/_$basename" "$moduledir/_$filename.o"
+		if [[ $USE_SEPARATE_SECTIONS ]]; then
+			buildFile $file "$moduledir/_$basename" "$moduledir/_$filename.o"
+		else
+			cp "$BUILD_DIR/${file%.*}.o" "$moduledir/_$filename.o"
+		fi
 		usekbuild=$?
 		if [[ $usekbuild == 0 ]]; then
 			buildFile $file "$moduledir/$basename" "$moduledir/$filename.o"

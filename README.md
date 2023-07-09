@@ -1,4 +1,4 @@
-# DEKU
+# DExterous Kernel Update [DEKU]
 
 _**For ChromiumOS developers:**_
 
@@ -20,6 +20,7 @@ The DEKU is a utility that allows quick apply changes from Linux kernel source c
 <a name="prerequisites"></a>
 ## Prerequisites
  - Install `libelf`
+ - Install `libopcodes`
  - Enable `CONFIG_LIVEPATCH` in kernel config  
  The above flag depends on the `KALLSYMS_ALL` flag that isn't enabled by default.
  - SSH Key-Based authentication to the DUT
@@ -79,7 +80,5 @@ If you are going to using DEKU with another kernel or device, you will need to d
  - Functions marked as `__init`, `__exit` and `notrace` are not supported.
  - Functions that uses jump labels/static keys are not supported yet.
  - KLP relocations for non-unique symbols in modules are not supported yet.
- - Functions containing `__read_mostly` are not supported yet.
- - Optimized functions with the `.cold` suffix are not supported yet.
  - Functions with non-unique name in the object file are not supported yet.
- - Kernel configurations with the CONFIG_OBJTOOL for stack validation are not supported yet.
+ - Kernel configurations with the CONFIG_OBJTOOL for stack validation are not fully supported yet.

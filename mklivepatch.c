@@ -26,6 +26,9 @@
 * * Add new relocation sections with a relocations entry
 */
 
+#define SHF_RELA_LIVEPATCH	0x00100000
+#define SHN_LIVEPATCH	0xff20
+
 /* In kernel, this size is defined in linux/module.h;
  * here we use Elf_Addr instead of long for covering cross-compile
  */
@@ -199,7 +202,7 @@ static int convSymToLpRelSym(Elf *elf)
 			if (strcmp(name, symToRelocate[j].fName) == 0)
 			{
 				sym.st_name = symToRelocate[j].symOff;
-				sym.st_shndx = 0xFF20;
+				sym.st_shndx = SHN_LIVEPATCH;
 				LOG_DEBUG("Convert to livepatch symbol '%s'", name);
 			}
 		}
@@ -291,7 +294,7 @@ static void addRelaSection(Elf *elf, RelaSym **relocs, char **names)
 		gelf_getshdr(newscn, &shdr);
 		RelaSym *relaSym = relocs[i];
 		memcpy(&shdr, &relaSym->shdr, sizeof(GElf_Shdr));
-		shdr.sh_flags = SHF_ALLOC | 0x0000000000100000;
+		shdr.sh_flags = SHF_ALLOC | SHF_RELA_LIVEPATCH;
 
 		newData->d_size = relaSym->relaCnt * shdr.sh_entsize;
 		newData->d_type = ELF_T_RELA;

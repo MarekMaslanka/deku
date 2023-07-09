@@ -1,4 +1,4 @@
-# DEKU for ChromiumOS
+# # DExterous Kernel Update [DEKU] for ChromiumOS
 
 ## Table of Contents
 - [About the DEKU](#about)
@@ -40,7 +40,7 @@ Adjust:
 - `--board=<BOARD_NAME>` board name. The meaning of this parameter is the same as in the ChromiumOS SDK,
 - `-p root@<DUT_ADDRESS[:PORT]>` Chromebook address and optionally SSH port number.
 
-Example usage:
+Example usage:  
 `deku --board=brya -p root@192.168.0.100:22 init`
 
 <a name="usage"></a>
@@ -51,7 +51,7 @@ deku --board=<BOARD_NAME> deploy
 ```
 to apply changes to the kernel on the DUT.
 
-Example usage:
+Example usage:  
 `deku --board=brya deploy`
 
 ***
