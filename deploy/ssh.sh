@@ -68,9 +68,7 @@ main()
 	[[ "$1" == "--kernel-version" ]] && { getKernelVersion; return $NO_ERROR; }
 
 	local files=$@
-	local disablemod=
 	local transwait=
-	local rmmod=
 	local checkmod=
 	local insmod=
 	# prepare script that tries in loop disable livepatch and do rmmod. Next do insmod
@@ -90,12 +88,13 @@ main()
 		local modulename=${module/-/_}
 		local modulesys="/sys/kernel/livepatch/$modulename"
 		local originname=$(originModName $module)
-		disablemod+="[ -d $modulesys ] && echo 0 > $modulesys/enabled\n"
-		transwait+="for i in \`seq 1 25\`; do\n"
+		transwait+="for i in \`seq 1 250\`; do\n"
+		transwait+="\t[ -d $modulesys ] && echo 0 > $modulesys/enabled\n"
+		transwait+="\tsleep 0.2\n"
+		transwait+="\t[ -d /sys/module/$modulename ] && rmmod $modulename\n"
+		transwait+="\t[ -d $modulesys ] && sleep 0.2\n"
 		transwait+="\t[ ! -d $modulesys ] && break\n"
-		transwait+="\t[ \$(cat $modulesys/transition) = \"0\" ] && break\n"
-		transwait+="\tsleep 0.2\ndone\n"
-		rmmod+="[ -d /sys/module/$modulename ] && rmmod $modulename\n"
+		transwait+="done\n"
 		if [ -z $skipload ]; then
 			checkmod+="\n[ ! -d $modulesys ] && \\\\"
 			insmod+="module=`basename $file`\n"
@@ -117,7 +116,7 @@ main()
 			insmod+="echo \"$originname loaded\"\n"
 		fi
 	done
-	reloadscript+="\n$disablemod\n$transwait\n$rmmod$checkmod\nbreak;\nsleep 1\ndone"
+	reloadscript+="\n$transwait\n$checkmod\nbreak;\nsleep 1\ndone"
 	reloadscript+="\n$insmod"
 	echo -e $reloadscript > $workdir/$DEKU_RELOAD_SCRIPT
 
