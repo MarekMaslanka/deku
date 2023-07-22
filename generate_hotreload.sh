@@ -96,7 +96,7 @@ findSymbolIndex()
 	local mapfile="$SYSTEM_MAP"
 	local count=`grep " $symbol$" "$mapfile" | wc -l`
 	[[ $count == "1" ]] && return
-	logInfo "Found $count occurrences of the symbol '$symbol'"
+	logDebug "Found $count occurrences of the symbol '$symbol'"
 	local maches=`grep -A 10 -B 10 " $symbol$" "$mapfile" | cut -d " " -f 3`
 	index=1
 	local occure=0
@@ -130,7 +130,12 @@ main()
 
 	modules=$(findModifiedModules "$prevmod")
 	if [ -z "$modules" ]; then
-		logInfo "No valid changes detected since last run"
+		local modfiles=$(modifiedFiles)
+		if [ -z "$modfiles" ]; then
+			logInfo "No change detected in the source code"
+		else
+			logInfo "No valid changes detected since last run"
+		fi
 		exit $NO_ERROR
 	fi
 

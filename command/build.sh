@@ -5,13 +5,6 @@
 
 main()
 {
-	local syncversion=$(<"$KERNEL_VERSION_FILE")
-	local localversion=$(getKernelVersion)
-	if [[ "$syncversion" != "$localversion" ]]; then
-		logWarn "Kernel image in the build directory has changed from last run. You must undo any changes made after the kernel was built and run 'make sync' again."
-		exit $ERROR_NOT_SYNCED
-	fi
-
 	# remove old modules from workdir
 	local validmodules=()
 	for file in $(modifiedFiles)

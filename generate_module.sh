@@ -98,6 +98,7 @@ cmdFromMod()
 	local -n _skipparam=$4
 	[[ ! -f $modfile ]] && return
 	local line=`head -n 1 $modfile`
+	[[ "$INTERCEPT_BUILD_CMD_LINE" ]] && line=$($INTERCEPT_BUILD_CMD_LINE "$line")
 	line="${line#*=}"
 	if [[ "$line" == *";"* ]]; then
 		_extracmd=("${line#*;}")
@@ -152,6 +153,7 @@ buildFile()
 	[[ $outfile != /* ]] && outfile="`pwd`/$outfile"
 	[[ $compilefile != /* ]] && compilefile="`pwd`/$compilefile"
 	[[ $separatesections ]] && cmd+=" -ffunction-sections -fdata-sections"
+	# TODO: add macro -fdebug-prefix-map
 	cmd+=" -o $outfile $compilefile"
 
 	cd "$LINUX_HEADERS"
@@ -275,12 +277,12 @@ generateDiffObject()
 		[[ $fun == "" ]] && continue
 		local initfunc=`objdump -t -j ".init.text" "$moduledir/_$filename.o" 2>/dev/null | grep "\b$fun\b"`
 		if [[ "$initfunc" != "" ]]; then
-			logInfo "Detected modifications in the init function '$fun'. Modifications from this function will not be applied."
+			logInfo "The init function '$fun' has been modified. Any changes made to this function will not be applied."
 			continue
 		fi
 		local initfunc=`objdump -t -j ".exit.text" "$moduledir/_$filename.o" 2>/dev/null | grep "\b$fun\b"`
 		if [[ "$initfunc" != "" ]]; then
-			logInfo "Detected modifications in the exit function '$fun'. Modifications from this function will not be applied."
+			logInfo "The exit function '$fun' has been modified. Any changes made to this function will not be applied."
 			continue
 		fi
 		if [[ $fun == *".cold" ]]; then
@@ -304,8 +306,7 @@ generateDiffObject()
 		if [[ "$objpath" == "vmlinux" ]]; then
 			local count=`nm "$BUILD_DIR/$objpath" | grep "\b$fun\b" | wc -l`
 			if [[ $count > 1 ]]; then
-				logErr "Can't apply changes to '$file' because there are multiple functions with the '$fun' name in the kernel image. This is not yet supported by DEKU."
-				exit $ERROR_NO_SUPPORT_MULTI_FUNC
+				logWarn "Found multiple instances of '$fun' from the '$file' in the kernel image. This case is not yet fully supported by DEKU."
 			fi
 		fi
 
@@ -323,7 +324,7 @@ generateDiffObject()
 		[[ "$fun" == "" ]] && continue
 		# if modified function is inlined in origin file then get functions that call
 		# this function and make DEKU module for those functions
-		if ! grep -q "\b$fun\b" <<< "$originfuncs"; then
+		if [[ $USE_SEPARATE_SECTIONS != "" ]] && ! grep -q "\b$fun\b" <<< "$originfuncs"; then
 			logDebug "$fun function in $file is inlined"
 			sed -i "/\b$fun\b/d" "$moduledir/$MOD_SYMBOLS_FILE"
 			local calls=`./elfutils --callchain -f "$moduledir/$filename.o" | grep -E "^\b$fun\b"`
@@ -378,6 +379,41 @@ generateDiffObject()
 	return 1
 }
 
+findObjectFile()
+{
+	local srcfile=$1
+
+	local srcpath=$SOURCE_DIR/
+	local modulespath=$MODULES_DIR/
+	srcpath+=`dirname $srcfile`
+	modulespath+=`dirname $srcfile`
+	while true; do
+		# TODO: try find srcfile in built-in.a.cmd in while loops
+		local kofiles=`find "$modulespath" -maxdepth 1 -type f -name "*.ko"`
+		if [ "$kofiles" != "" ]; then
+			while read -r kofile; do
+				local relofile=${kofile#*$MODULES_DIR/}
+				local path=`dirname $kofile`
+				grep -q "\b$relofile\b" "$path/modules.order" || continue
+
+				# TODO: check if $file.mod include object file
+				local file=`basename $srcfile`
+				readelf --symbols --wide "$kofile" | \
+				awk 'BEGIN { ORS=" " } { if($4 == "FILE") {printf "%s\n",$8} }' | \
+				grep -q "\b$file\b" && \
+				echo $(filenameNoExt "$kofile") && \
+				return $NO_ERROR
+			done <<< "$kofiles"
+		fi
+		[ -f "$srcpath/Kconfig" ] && break
+		srcpath+="/.."
+		modulespath+="/.."
+	done
+
+	echo vmlinux
+	return $NO_ERROR
+}
+
 generateLivepatchSource()
 {
 	local moduledir=$1
@@ -386,18 +422,9 @@ generateLivepatchSource()
 	local modsymfile="$moduledir/$MOD_SYMBOLS_FILE"
 	local klpfunc=""
 	local prototypes=""
+	local objname=$(findObjectFile "$file")
 
-	local objname
-
-	# find object for modified functions
-	while read -r symbol; do
-		objname=$(findObjWithSymbol $symbol "$file")
-		[ ! -z "$objname" ] && { echo $objname > "$moduledir/$FILE_OBJECT"; break; }
-	done < $modsymfile
-	if [ -z "$objname" ]; then
-		logWarn "Modified file '$file' is not compiled into kernel/module. Skip the file"
-		return 1
-	fi
+	echo $objname > "$moduledir/$FILE_OBJECT"
 
 	while read -r symbol; do
 		local plainsymbol="${symbol//./_}"
@@ -463,8 +490,20 @@ postBuild()
 buildInKernel()
 {
 	local file=$1
-	[ -f "$BUILD_DIR/${file%.*}.o" ] && return 0
-	return 1
+
+	local objfile=${file%.*}.o
+	local dir=`dirname $file`
+
+	while true; do
+		if [ -f "$BUILD_DIR/$dir/.built-in.a.cmd" ]; then
+			grep -q "\b$objfile\b" "$BUILD_DIR/$dir/.built-in.a.cmd" && return 0
+		fi
+		dir=`dirname $dir`
+		if [[ "$dir" == "/" || "$dir" == "." ]]; then
+			[[ $(findObjectFile $file) != "vmlinux" ]] && return 0
+			return 1
+		fi
+	done
 }
 
 main()
@@ -478,8 +517,12 @@ main()
 	for file in $files
 	do
 		if [[ "${file#*.}" != "c" ]]; then
-			logWarn "Only changes in '.c' files are supported. Undo changes in $file and try again."
-			exit $ERROR_UNSUPPORTED_CHANGES
+			logWarn "Detected changes in $file. Only changes in '.c' files are supported."
+			if [ "$KERN_SRC_INSTALL_DIR" ]; then
+				logWarn "Undo changes in $file and try again."
+				exit $ERROR_UNSUPPORTED_CHANGES
+			fi
+			logWarn "Rebuild the kernel to suppress this warning."
 		fi
 	done
 
@@ -493,17 +536,21 @@ main()
 	do
 		local basename=`basename $file`
 		local filename=$(filenameNoExt "$file")
-		if ! buildInKernel "$file"; then
-			logWarn "File '$file' is not used in the kernel or module. Skip"
-			continue
-		fi
 		local module=$(generateModuleName "$file")
 		local moduledir="$workdir/$module"
 		local moduleid=$(generateModuleId "$file")
+
 		# check if changed since last run
 		if [ -s "$moduledir/id" ]; then
 			local prev=$(<$moduledir/id)
 			[ "$prev" == "$moduleid" ] && continue
+		fi
+		if ! buildInKernel "$file"; then
+			logWarn "File '$file' is not used in the kernel or module. Skip"
+			mkdir -p "$moduledir"
+			echo -n "$moduleid" > "$moduledir/id"
+			rm -f "$moduledir/$module.ko"
+			continue
 		fi
 
 		rm -rf $moduledir
@@ -515,8 +562,6 @@ main()
 		# file name with prefix '_' is the origin file
 		if [ "$KERN_SRC_INSTALL_DIR" ]; then
 			cp "$KERN_SRC_INSTALL_DIR/$file" "$moduledir/_$basename"
-		else
-			git -C $workdir cat-file blob ":$file" > "$moduledir/_$basename"
 		fi
 
 		cp "$SOURCE_DIR/$file" "$moduledir/$basename"
@@ -544,6 +589,8 @@ main()
 
 		if generateDiffObject "$moduledir" "$file"; then
 			logInfo "No valid changes found in '$file'"
+			rm -f "$moduledir/$module.ko"
+			echo -n "$moduleid" > "$moduledir/id"
 			continue
 		fi
 

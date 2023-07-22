@@ -50,11 +50,17 @@ generateSymbols()
 {
 	local kofile=$1
 	local path=`dirname $kofile`
-	path=${path#*$MODULES_DIR}
+	if ! grep -q "\b$kofile\b" "$MODULES_DIR/$path/modules.order"; then
+		logDebug "The module $kofile file is not enabled in current kernel configuration"
+		return
+	fi
 	local outfile="$SYMBOLS_DIR/$path/"
 	mkdir -p "$outfile"
 	outfile+=$(filenameNoExt "$kofile")
-	nm -f posix "$kofile" | cut -d ' ' -f 1,2 > "$outfile"
+
+	readelf --symbols --wide "$MODULES_DIR/$kofile" | \
+	awk 'BEGIN { ORS=" " } { if($4 == "FUNC" || $4 == "OBJECT") {printf "%s\n",$8} }' \
+	> "$outfile"
 }
 export -f generateSymbols
 
@@ -63,12 +69,7 @@ findObjWithSymbol()
 	local sym=$1
 	local srcfile=$2
 
-	#TODO: For module objects try to find symbol in the same module
 	#TODO: Consider checking type of the symbol
-	grep -q "\b$sym\b" "$SYSTEM_MAP" && { echo vmlinux; return $NO_ERROR; }
-
-	local out=`grep -lr "\b$sym\b" $SYMBOLS_DIR`
-	[ "$out" != "" ] && { echo $(filenameNoExt "$out"); return $NO_ERROR; }
 
 	local srcpath=$SOURCE_DIR/
 	local modulespath=$MODULES_DIR/
@@ -78,6 +79,7 @@ findObjWithSymbol()
 		local files=`find "$modulespath" -maxdepth 1 -type f -name "*.ko"`
 		if [ "$files" != "" ]; then
 			while read -r file; do
+				file=${file#*$MODULES_DIR/}
 				symfile=$(filenameNoExt "$file")
 				[ -f "$SYMBOLS_DIR/$symfile" ] && continue
 				generateSymbols $file
@@ -90,6 +92,8 @@ findObjWithSymbol()
 		srcpath+="/.."
 		modulespath+="/.."
 	done
+
+	grep -q "\b$sym\b" "$SYSTEM_MAP" && { echo vmlinux; return $NO_ERROR; }
 
 	exit $ERROR_CANT_FIND_SYMBOL
 }
@@ -113,18 +117,72 @@ export -f getKernelReleaseVersion
 # find modified files
 modifiedFiles()
 {
-	if [ ! "$KERN_SRC_INSTALL_DIR" ]; then
-		git -C "$workdir" diff --name-only | grep -E ".+\.[ch]$"
+	if [[ "$CASHED_MODIFIED_FILES" ]]; then
+		echo "$CASHED_MODIFIED_FILES"
 		return
 	fi
 
-	cd "$SOURCE_DIR/"
-	local files=`find . -type f -name "*.c" -o -name "*.h"`
-	cd $OLDPWD
+	if [ ! "$KERN_SRC_INSTALL_DIR" ]; then
+		local quickfind=1
+
+		if [[ $quickfind ]]; then
+			local ignorearrayh=(
+								arch/x86/realmode/rm/pasyms.h
+								arch/x86/boot/voffset.h
+								arch/x86/boot/cpustr.h
+								arch/x86/boot/zoffset.h
+								)
+			local ignorearrayc=(
+								arch/x86/entry/vdso/vdso-image-32.c
+								arch/x86/entry/vdso/vdso-image-64.c
+								)
+			local ignoreh=
+			local ignorec=
+			for file in ${ignorearrayh[@]}; do
+				ignoreh+="! -iwholename ./$file "
+			done
+			for file in ${ignorearrayc[@]}; do
+				ignorec+="! -iwholename ./$file "
+			done
+			ignorec+="! -iname \"*.mod.c\" "
+			cd "$SOURCE_DIR/"
+			local files=`find . -not \( -path ./include/generated -prune -o -path ./scripts -prune \) \
+								-type f \( -iname "*.c" $ignorec -or -iname "*.h" $ignoreh \) \
+								-newer "$BUILD_DIR/.config"`
+			cd $OLDPWD
+
+			while read -r file; do
+				echo "${file:2}"
+			done <<< "$files"
+
+			return
+		fi
+
+		cd "$BUILD_DIR/"
+		local ofiles=`find . -type f -name "*.o"`
+		cd $OLDPWD
+		cd "$SOURCE_DIR/"
+		local hfiles=`find . -type f -name "*.h" -newer "$BUILD_DIR/.config"`
+		cd $OLDPWD
+
+		while read -r file; do
+			echo "${file:2}"
+		done <<< "$hfiles"
+
+		while read -r ofile; do
+			local cfile=${ofile/.o/.c}
+			[ "$SOURCE_DIR/$cfile" -nt "$BUILD_DIR/$ofile" ] && echo "$cfile"
+		done <<< "$ofiles"
+
+		return
+	fi
+	local files=`rsync --archive --dry-run --verbose \
+					   "$SOURCE_DIR/" "$KERN_SRC_INSTALL_DIR/" | \
+					   grep -e "\.c$" -e "\.h$"`
 	while read -r file; do
 		if [ "$SOURCE_DIR/$file" -nt "$KERN_SRC_INSTALL_DIR/$file" ]; then
 			cmp --silent "$SOURCE_DIR/$file" "$KERN_SRC_INSTALL_DIR/$file" || \
-			echo "${file:2}"
+			echo "$file"
 		fi
 	done <<< "$files"
 }

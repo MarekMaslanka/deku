@@ -10,8 +10,8 @@ export workdir="$WORKDIR"
 . ./header.sh
 
 QEMU_SSH_PORT="60022"
-SSHPARAMS="root@localhost -p $QEMU_SSH_PORT -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i test/testing_rsa"
-DEPLOY_PARAMS="root@localhost:$QEMU_SSH_PORT -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i test/testing_rsa"
+SSHPARAMS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i test/testing_rsa"
+DEPLOY_PARAMS="root@localhost:$QEMU_SSH_PORT"
 REMOTE_OUT=""
 
 TEST_CACHE_DIR="$HOME/.cache/deku"
@@ -219,7 +219,7 @@ integrationTest()
 	runQemu
 
 	rm -rf "$WORKDIR"
-	./deku -w "$WORKDIR" -b "$BUILD_DIR" -d ssh -p "$DEPLOY_PARAMS" init
+	./deku -w "$WORKDIR" -b "$BUILD_DIR" -d ssh -p "$DEPLOY_PARAMS" --ssh_options="$SSHPARAMS" init
 
 	# check if no module is build
 	./deku -w "$WORKDIR" deploy
@@ -327,7 +327,7 @@ inlineTest()
 	prepareKernel v5.4.200
 
 	rm -rf "$WORKDIR"
-	./deku -w "$WORKDIR" -b "$BUILD_DIR" -d ssh -p "$DEPLOY_PARAMS" init
+	./deku -w "$WORKDIR" -b "$BUILD_DIR" -d ssh -p "$DEPLOY_PARAMS" --ssh_options="$SSHPARAMS" init
 
 	appendToFunction "$SOURCE_DIR/drivers/gpu/drm/i915/display/intel_dvo.c" intel_attached_dvo "pr_info(\"\");"
 	./deku -w "$WORKDIR" build || return 1
@@ -345,7 +345,7 @@ inline2Test()
 	prepareKernel v5.4.200
 
 	rm -rf "$WORKDIR"
-	./deku -w "$WORKDIR" -b "$BUILD_DIR" -d ssh -p "$DEPLOY_PARAMS" init
+	./deku -w "$WORKDIR" -b "$BUILD_DIR" -d ssh -p "$DEPLOY_PARAMS" --ssh_options="$SSHPARAMS" init
 
 	appendToFunction "$SOURCE_DIR/drivers/input/evdev.c" evdev_get_mask_cnt "pr_info(\"evdev_get_mask_cnt\");" # evdev_set_mask evdev_get_mask __evdev_is_filtered
 	appendToFunction "$SOURCE_DIR/drivers/input/evdev.c" __evdev_is_filtered "pr_info(\"__evdev_is_filtered\");" # evdev_pass_values
@@ -368,7 +368,7 @@ moduleTest()
 	enableKernelConfig NF_LOG_ARP "--module"
 	buildKernel
 	rm -rf "$WORKDIR"
-	./deku -w "$WORKDIR" -b "$BUILD_DIR" -d ssh -p "$DEPLOY_PARAMS" init
+	./deku -w "$WORKDIR" -b "$BUILD_DIR" -d ssh -p "$DEPLOY_PARAMS" --ssh_options="$SSHPARAMS" init
 
 	appendToFunction "$SOURCE_DIR/net/ipv4/netfilter/nf_log_arp.c" nf_log_arp_packet "pr_info(\"\");"
 	./deku -w "$WORKDIR" build || return 1
@@ -388,7 +388,7 @@ symbolsTest()
 	enableKernelConfig X86_PKG_TEMP_THERMAL "--module"
 	buildKernel
 	rm -rf "$WORKDIR"
-	./deku -w "$WORKDIR" -b "$BUILD_DIR" -d ssh -p "$DEPLOY_PARAMS" init
+	./deku -w "$WORKDIR" -b "$BUILD_DIR" -d ssh -p "$DEPLOY_PARAMS" --ssh_options="$SSHPARAMS" init
 
 	appendToFunction "$SOURCE_DIR/drivers/thermal/intel/x86_pkg_temp_thermal.c" pkg_thermal_cpu_offline "pr_info(\"x86_pkg_temp_thermal\");"
 	./deku -w "$WORKDIR" build || return 1
@@ -408,7 +408,7 @@ complexTest()
 	enableKernelConfig CONFIG_IWLWIFI
 	buildKernel
 
-	./deku -w "$WORKDIR" -b "$BUILD_DIR" -d ssh -p "$DEPLOY_PARAMS" init
+	./deku -w "$WORKDIR" -b "$BUILD_DIR" -d ssh -p "$DEPLOY_PARAMS" --ssh_options="$SSHPARAMS" init
 	appendToFunction "$SOURCE_DIR/drivers/net/wireless/intel/iwlwifi/pcie/trans.c" iwl_trans_pcie_grab_nic_access "pr_info(\"iwl_trans_pcie_grab_nic_access\");"
 	./deku -w "$WORKDIR" build || return 1
 	checkIfFileExists "$WORKDIR/deku_72aff690_trans/deku_72aff690_trans.ko" || return 2
@@ -429,7 +429,7 @@ buildTest()
 	prepareKernel v5.0 1
 
 	rm -rf "$WORKDIR"
-	./deku -w "$WORKDIR" -b "$BUILD_DIR" -d ssh -p "$DEPLOY_PARAMS" init
+	./deku -w "$WORKDIR" -b "$BUILD_DIR" -d ssh -p "$DEPLOY_PARAMS" --ssh_options="$SSHPARAMS" init
 
 	local out=`find $dir -maxdepth 30 -type f -name "*.c"`
 	while read -r file; do
